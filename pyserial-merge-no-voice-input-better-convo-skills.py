@@ -3,12 +3,12 @@ import re
 # AI Code Setup
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
-'''
+
 # PYSERIAL SET UP
 import serial
 import time
 
-arduino = serial.Serial('/dev/tty.usbmodem101', 9600, timeout=1)
+arduino = serial.Serial('/dev/tty.usbmodem1101', 9600, timeout=1)
 time.sleep(2)  # Wait for serial connection
 
 def send_data_to_arduino(data):
@@ -20,7 +20,7 @@ def send_data_to_arduino(data):
     if arduino.in_waiting > 0:
         response = arduino.readline().decode('utf-8').strip()
         print("Arduino response: ", response)
-'''
+
 # AI Setup
 template = """
 Answer the question below.
@@ -109,10 +109,10 @@ def handle_conversation():
                 long_instruction += f"{direction} {time_in_ms} "
                 contain_instructions = True
             elif direction == "stop" and i == len(instructions) - 1:
-                long_instruction += f"{direction} "
+                long_instruction += f"{direction} -1"
         if(contain_instructions):
             print("Bot: ", long_instruction)
-             # send_data_to_arduino(long_instruction)
+            send_data_to_arduino(long_instruction)
         else:
             # If no direction or time is found, use AI to respond
             result = chain.invoke({"context": context, "question": user_input})
