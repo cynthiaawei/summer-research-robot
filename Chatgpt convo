@@ -1,0 +1,107 @@
+🧠 Summary:
+✅ Python sends a string command (e.g., "forward\n" or "turnRight 5000\n") using BLE GATT.
+
+✅ Arduino must have a BLECharacteristic defined with that exact UUID and must register a write callback to process the command.
+
+✅ You then parse the command string on the Arduino (e.g., split into command + duration) and control motors accordingly.
+
+✅ Here’s what you need on the Arduino side (Nano 33 BLE):
+1. Install the library:
+In Arduino IDE, go to Library Manager, and install ArduinoBLE.
+
+2. Arduino Sketch Template:
+cpp
+Copy
+Edit
+#include <ArduinoBLE.h>
+
+BLEService mainService("19B10010-E8F2-537E-4F6C-D104768A1214");
+BLECharacteristic commandChar("19B10011-E8F2-537E-4F6C-D104768A1214", BLEWrite | BLEWriteWithoutResponse, 50);
+
+String receivedCommand = "";
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);
+
+  // Start BLE
+  if (!BLE.begin()) {
+    Serial.println("BLE init failed!");
+    while (1);
+  }
+
+  BLE.setLocalName("NanoRobot");
+  BLE.setAdvertisedService(mainService);
+  mainService.addCharacteristic(commandChar);
+  BLE.addService(mainService);
+  commandChar.writeValue("READY");
+
+  BLE.advertise();
+  Serial.println("BLE Ready. Waiting for commands...");
+}
+
+void loop() {
+  BLEDevice central = BLE.central();
+  if (central) {
+    Serial.print("Connected to: ");
+    Serial.println(central.address());
+
+    while (central.connected()) {
+      if (commandChar.written()) {
+        receivedCommand = commandChar.value();
+        Serial.print("Received: ");
+        Serial.println(receivedCommand);
+        parseAndExecute(receivedCommand);
+      }
+    }
+
+    Serial.println("Disconnected");
+  }
+}
+
+// === Motor control mockup ===
+void parseAndExecute(String cmd) {
+  cmd.trim();
+  if (cmd == "forward") {
+    Serial.println("🚗 Moving forward");
+    // add motor control code here
+  } else if (cmd == "backward") {
+    Serial.println("🔙 Moving backward");
+  } else if (cmd == "left") {
+    Serial.println("↩️ Turning left");
+  } else if (cmd == "right") {
+    Serial.println("↪️ Turning right");
+  } else if (cmd == "stop") {
+    Serial.println("🛑 Stopping");
+  } else if (cmd.startsWith("turnLeft") || cmd.startsWith("turnRight") || cmd.startsWith("forward") || cmd.startsWith("backward")) {
+    // Split with space
+    int sep = cmd.indexOf(' ');
+    String action = cmd.substring(0, sep);
+    int duration = cmd.substring(sep + 1).toInt();
+
+    Serial.print("Action: ");
+    Serial.print(action);
+    Serial.print(" for ");
+    Serial.print(duration);
+    Serial.println(" ms");
+
+    // Implement timed motor control based on action and duration
+  } else {
+    Serial.println("⚠️ Unknown command");
+  }
+}
+🧪 Test Flow:
+Upload the Arduino code above to Nano 33 BLE.
+
+Run your Python script.
+
+It will scan and show NanoRobot or any name you gave.
+
+Select it → connect → start sending commands ("forward\n", "stop\n", "turnLeft 5000\n", etc.).
+
+The Arduino parses those strings and you can wire the motors accordingly.
+
+🛠️ Tip:
+Once your parsing and command structure works, you can replace Serial.print with actual motor driver functions.
+
+Let me know if you want the motor control code integrated into the Arduino sketch!
