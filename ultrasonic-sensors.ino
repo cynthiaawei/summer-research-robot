@@ -67,47 +67,44 @@ void loop() {
   int distance3 = duration3 * 0.034 / 2;
 
   //Print distance to the Serial Monitor
-  Serial.print("Distance 1: ");
-  Serial.print(distance1);
-  Serial.println(" cm");
-  Serial.print("Distance 2: ");
-  Serial.print(distance2);
-  Serial.println(" cm");
-  Serial.print("Distance 3: ");
-  Serial.print(distance3);
-  Serial.println(" cm");
-  Serial.println("\n");
+  // Serial.print("Distance 1: ");
+  // Serial.print(distance1);
+  // Serial.println(" cm");
+  // Serial.print("Distance 2: ");
+  // Serial.print(distance2);
+  // Serial.println(" cm");
+  // Serial.print("Distance 3: ");
+  // Serial.print(distance3);
+  // Serial.println(" cm");
+  // Serial.println("\n");
 
   if(distance1 > threshold_distance){
     digitalWrite(outputPin1, LOW);
-    Serial.println("output1 low");
+    Serial.println("1: l");
   } else {
     digitalWrite(outputPin1, HIGH);
-    Serial.println("output1 high");
+    Serial.println("1: h");
   }
 
   if(distance2 > threshold_distance){
     digitalWrite(outputPin2, LOW);
-    Serial.println("output3 low");
+    Serial.println("2: l");
   } else {
     digitalWrite(outputPin2, HIGH);
-    Serial.println("output2 high");
+    Serial.println("2: h");
   }
 
   if(distance3 > threshold_distance){
     digitalWrite(outputPin3, LOW);
-    Serial.println("output3 low");
+    Serial.println("3: l");
   } else {
     digitalWrite(outputPin3, HIGH);
-    Serial.println("output3 high");
+    Serial.println("3: h");
   }
 
-  Serial.println(digitalRead(outputPin1));
-  Serial.println(digitalRead(outputPin2));
-  Serial.println(digitalRead(outputPin3));
+  // Serial.println(digitalRead(outputPin1));
+  // Serial.println(digitalRead(outputPin2));
+  // Serial.println(digitalRead(outputPin3));
   Serial.println("\n");
-
-  // Wait a bit before the next measurement
-  delay(200);
 }
 
