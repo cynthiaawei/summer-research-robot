@@ -44,9 +44,7 @@ static char bleBuffer[128] = {0};
 BLEService robotService("19B10000-E8F2-537E-4F6C-D104768A1214");
 BLECharacteristic commandChar(
   "19B10011-E8F2-537E-4F6C-D104768A1214",
-  BLEWrite | BLENotify,
-  128
-);
+  BLEWrite | BLENotify,  128);
 
 //=== HELPER: Ramp motor speeds smoothly ===//
 void changeSpeedSmooth(int curSpeed1, int newSpeed1,
