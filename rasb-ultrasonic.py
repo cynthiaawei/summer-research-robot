@@ -4,7 +4,12 @@ import time
 # BCM pin assignments
 TRIG = 37    # trigger pin
 ECHO = 31    # echo pin
-LED  = 11   # output LED pin
+LED = 6
+# TRIG2 = 35    # trigger pin
+# ECHO2 = 29    # echo pin
+# TRIG3 = 33    # trigger pin
+# ECHO3 = 27    # echo pin
+
 THRESH_CM = 30
 
 GPIO.setmode(GPIO.BOARD)
