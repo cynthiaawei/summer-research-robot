@@ -2,8 +2,8 @@ import RPi.GPIO as GPIO
 import time
 
 # BCM pin assignments
-TRIG = 26    # trigger pin
-ECHO = 6    # echo pin
+TRIG = 37    # trigger pin
+ECHO = 31    # echo pin
 LED  = 11   # output LED pin
 THRESH_CM = 30
 
