@@ -49,7 +49,7 @@ import sys
 
 def find_serial_port():
     """Try different serial port names"""
-    ports = ['/dev/serial0', '/dev/ttyS0', '/dev/ttyAMA0']
+    ports = ['/dev/serial10', '/dev/ttyS0', '/dev/ttyAMA0']
     for port in ports:
         try:
             ser = serial.Serial(port, baudrate=115200, timeout=0.5)
