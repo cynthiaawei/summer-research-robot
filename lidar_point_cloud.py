@@ -99,7 +99,7 @@ def main():
                 dist, strength, temp = result
                 success_count += 1
                 print(f"✓ Distance: {dist:4d} cm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Success: {success_count}")
-                csvwriter.writerow(dist)
+                csvwriter.writerow([dist, strength, temp])
                 # Check for reasonable values
                 if dist == 0 or dist > 8000:
                     print(f"  ⚠ Warning: Distance {dist}cm seems unusual")
