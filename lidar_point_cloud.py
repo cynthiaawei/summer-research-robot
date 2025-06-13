@@ -120,7 +120,6 @@ def main():
             
     except KeyboardInterrupt:
         print(f"\nStopped. Success: {success_count}, Errors: {error_count}")
-        f.close()
         
     finally:
         ser.close()
