@@ -360,7 +360,7 @@ def moveLeft(speed, time_ms):
 
 
 #=== STRING SPLITTING HELPERS ===#
-isEnd = False
+# isEnd = False
 
 # def nextWord(String &input) 
 #   input.trim()
@@ -432,12 +432,8 @@ def processCommand(command, time_ms):
 
 
 #Initialize code
-    # Initialize serial for debugging
-    #Serial.begin(9600)
-    #while (!Serial && millis() < 5000) # Wait up to 5 seconds for Serial
-    #Serial.println("=== Robot BLE Controller Starting ===")
-  
-  # Configure motor pins
+
+# setup motor pins
 GPIO.setmode(GPIO.BOARD) #using board numbering system
 GPIO.setup(Motor1_Speed, GPIO.OUT, initial = 0)
 GPIO.setup(Motor1_Dir, GPIO.OUT, initial = GPIO.LOW)
@@ -461,26 +457,6 @@ Motor3_pwm(0)
     #   attachInterrupt(digitalPinToInterrupt(interruptPin1), onSignal1, RISING)
     #   attachInterrupt(digitalPinToInterrupt(interruptPin2), onSignal2, RISING)
     #   attachInterrupt(digitalPinToInterrupt(interruptPin3), onSignal3, RISING)
-
-# Initialize BLE
-    #   if (!BLE.begin()) 
-    #     Serial.println("ERROR: Starting BLE failed!")
-    #     while (1)
-
-    #   BLE.setLocalName("RobotBLE")
-    #   robotService.addCharacteristic(commandChar)
-    #   BLE.addService(robotService)
-    #   commandChar.writeValue("idle")
-    #   BLE.setAdvertisedService(robotService)
-    #   BLE.setDeviceName("RobotBLE")
-    #   BLE.setAdvertisingInterval(100) # 100 ms interval
-    #   BLE.setConnectable(true)
-
-    #   if (!BLE.advertise()) 
-    #     Serial.println("ERROR: Failed to start advertising!")
-    #     while (1)
-    
-    #   Serial.println("BLE Robot Ready! Advertising as RobotBLE")
 
 # deleted while loop
 
