@@ -139,11 +139,11 @@ def main():
             if result:
                 dist, strength, temp = result
                 success_count += 1
-                print(f"✓ Distance: {dist:4d} mm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Success: {success_count}")
+                print(f"✓ Distance: {dist:4d} cm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Success: {success_count}")
                 
                 # Check for reasonable values
                 if dist == 0 or dist > 8000:
-                    print(f"  ⚠ Warning: Distance {dist}mm seems unusual")
+                    print(f"  ⚠ Warning: Distance {dist}cm seems unusual")
                 if strength == 0 or strength > 65000:
                     print(f"  ⚠ Warning: Strength {strength} seems unusual")
                     
