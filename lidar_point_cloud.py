@@ -1,163 +1,130 @@
 import serial
 import time
-import json
 import csv
-from datetime import datetime
 
-# Serial setup for TF-Luna
-ser = serial.Serial('/dev/ttyAMA0', baudrate=115200, timeout=0.5)
 
-def read_tfluna():
-    """Read TF-Luna data packet"""
+def find_serial_port():
+    """Try different serial port names"""
+    ports = ['/dev/serial10', '/dev/ttyS0', '/dev/ttyAMA0']
+    for port in ports:
+        try:
+            ser = serial.Serial(port, baudrate=115200, timeout=0.5)
+            print(f"Successfully opened {port}")
+            return ser
+        except serial.SerialException as e:
+            print(f"Failed to open {port}: {e}")
+    return None
+
+def read_tfluna(ser):
+    """Read TF-Luna data with improved error handling"""
+    try:
+        # Clear any existing data in buffer
+        ser.flushInput()
+        
+        # 1) Find the two-byte header 0x59 0x59
+        header_count = 0
+        max_attempts = 100  # Prevent infinite loop
+        
+        while header_count < max_attempts:
+            b1 = ser.read(1)
+            if not b1:
+                header_count += 1
+                continue
+                
+            if b1 != b'\x59': 
+                header_count += 1
+                continue
+                
+            b2 = ser.read(1)
+            if not b2:
+                header_count += 1
+                continue
+                
+            if b2 == b'\x59':
+                break
+            header_count += 1
+        
+        if header_count >= max_attempts:
+            return None, "Header timeout"
+        
+        # 2) Read the next 7 bytes
+        packet = ser.read(7)
+        if len(packet) < 7:
+            return None, f"Incomplete packet: got {len(packet)} bytes"
+        
+        # 3) Verify checksum
+        data = b'\x59\x59' + packet
+        calculated_checksum = sum(data[0:8]) & 0xFF
+        received_checksum = data[8]
+        
+        if calculated_checksum != received_checksum:
+            return None, f"Checksum mismatch: calc={calculated_checksum}, recv={received_checksum}"
+        
+        # 4) Parse data
+        dist = packet[0] | (packet[1] << 8)
+        strength = packet[2] | (packet[3] << 8)
+        raw_temp = packet[4] | (packet[5] << 8)
+        temp_c = raw_temp / 8.0 - 256
+        
+        return (dist, strength, temp_c), None
+        
+    except Exception as e:
+        return None, f"Exception: {e}"
+
+def main():
+    # Try to open serial port
+    
+    ser = find_serial_port()
     while True:
-        b1 = ser.read(1)
-        if not b1 or b1 != b'\x59': 
-            continue
-        b2 = ser.read(1)
-        if b2 == b'\x59':
+        out= input("Should I start Recording: ")
+        if out=='y':
             break
     
-    packet = ser.read(7)
-    if len(packet) < 7:
-        return None
+    if not ser:
+        print("ERROR: Could not open any serial port!")
+        return
     
-    data = b'\x59\x59' + packet
+    print("TF-Luna LiDAR Reader - Press Ctrl+C to stop")
+    print("-" * 50)
     
-    if (sum(data[0:8]) & 0xFF) != data[8]:
-        return None
-    
-    distance = packet[0] | (packet[1] << 8)
-    strength = packet[2] | (packet[3] << 8)
-    raw_temp = packet[4] | (packet[5] << 8)
-    temp_c = raw_temp / 8.0 - 256
-    
-    return distance, strength, temp_c
-
-class DataStorage:
-    def __init__(self):
-        self.data_points = []
-        self.recording = False
-        
-    def add_point(self, distance, strength, temp, angle=0):
-        """Add a data point with timestamp"""
-        timestamp = time.time()
-        point = {
-            'timestamp': timestamp,
-            'distance_mm': distance,
-            'distance_m': distance / 1000.0,
-            'strength': strength,
-            'temperature': temp,
-            'angle': angle
-        }
-        self.data_points.append(point)
-        
-    def save_to_json(self, filename=None):
-        """Save data to JSON file"""
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"lidar_data_{timestamp}.json"
-        
-        with open(filename, 'w') as f:
-            json.dump(self.data_points, f, indent=2)
-        
-        print(f"Saved {len(self.data_points)} points to {filename}")
-        return filename
-    
-    def save_to_csv(self, filename=None):
-        """Save data to CSV file"""
-        if not filename:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"lidar_data_{timestamp}.csv"
-        
-        with open(filename, 'w', newline='') as f:
-            writer = csv.writer(f)
-            # Header
-            writer.writerow(['timestamp', 'distance_mm', 'distance_m', 'strength', 'temperature', 'angle'])
+    success_count = 0
+    error_count = 0
+    with open('file.csv', 'w', newline='') as f:
+        csvwriter = csv.writer(f)
+    try:
+        while True:
+            result, error = read_tfluna(ser)
             
-            # Data
-            for point in self.data_points:
-                writer.writerow([
-                    point['timestamp'],
-                    point['distance_mm'],
-                    point['distance_m'],
-                    point['strength'],
-                    point['temperature'],
-                    point['angle']
-                ])
-        
-        print(f"Saved {len(self.data_points)} points to {filename}")
-        return filename
-    
-    def clear_data(self):
-        """Clear all stored data"""
-        self.data_points = []
-        print("Data cleared")
-
-# Create storage instance
-storage = DataStorage()
-
-print("TF-Luna Data Collection System")
-print("Commands:")
-print("  y - Start/Stop recording")
-print("  s - Save data to files")
-print("  c - Clear data")
-print("  q - Quit")
-print("-" * 40)
-
-try:
-    while True:
-        # Check for user input (non-blocking)
-        import select
-        import sys
-        
-        if select.select([sys.stdin], [], [], 0)[0]:
-            command = input().strip().lower()
-            
-            if command == 'y':
-                storage.recording = not storage.recording
-                if storage.recording:
-                    print("🔴 RECORDING STARTED")
-                else:
-                    print("⏹️  RECORDING STOPPED")
+            if result:
+                dist, strength, temp = result
+                success_count += 1
+                print(f"✓ Distance: {dist:4d} cm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Success: {success_count}")
+                csvwriter.writerow(dist)
+                # Check for reasonable values
+                if dist == 0 or dist > 8000:
+                    print(f"  ⚠ Warning: Distance {dist}cm seems unusual")
+                if strength == 0 or strength > 65000:
+                    print(f"  ⚠ Warning: Strength {strength} seems unusual")
                     
-            elif command == 's':
-                if storage.data_points:
-                    json_file = storage.save_to_json()
-                    csv_file = storage.save_to_csv()
-                    print(f"Data saved to {json_file} and {csv_file}")
-                else:
-                    print("No data to save")
-                    
-            elif command == 'c':
-                storage.clear_data()
+            else:
+                error_count += 1
+                print(f"✗ Error #{error_count}: {error}")
                 
-            elif command == 'q':
-                break
-        
-        # Read sensor data
-        result = read_tfluna()
-        if result:
-            distance, strength, temp = result
+                # Too many consecutive errors might indicate a problem
+                if error_count > 10 and success_count == 0:
+                    print("Too many errors with no successful reads.")
+                    print("Check wiring and power to TF-Luna sensor.")
+                    break
             
-            # Display current reading
-            status = "🔴 REC" if storage.recording else "⏸️  "
-            print(f"{status} | Distance: {distance:4d}mm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Points: {len(storage.data_points)}")
+            time.sleep(0.1)
             
-            # Store data if recording
-            if storage.recording:
-                storage.add_point(distance, strength, temp)
+    except KeyboardInterrupt:
+        print(f"\nStopped. Success: {success_count}, Errors: {error_count}")
+        f.close()
         
-        time.sleep(0.2)  # 5 readings per second
-        
-except KeyboardInterrupt:
-    print("\nStopped by user")
+    finally:
+        ser.close()
+        print("Serial port closed.")
 
-finally:
-    # Auto-save data if any exists
-    if storage.data_points:
-        print(f"Auto-saving {len(storage.data_points)} data points...")
-        storage.save_to_json()
-        storage.save_to_csv()
-    
-    ser.close()
-    print("Serial port closed")
+if __name__ == "__main__":
+    main()
