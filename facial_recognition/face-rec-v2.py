@@ -11,14 +11,7 @@ def take_picture(name):
     if success:
         path = os.path.join('/Users/cynthia/face-recognition/images', name + '.jpg')
         cv2.imwrite(path, image)
-        return image
-    else:
-        raise RuntimeError("Failed to capture image")
 
-# take pictures
-# img1 = take_picture("test")
-
-# obtain list of all images in the images folder
 path = '/Users/cynthia/face-recognition/images'
 images = []
 classNames = []
@@ -44,6 +37,8 @@ encodeListKnown = findEncodings(images)
 # turn on camera
 cap = cv2.VideoCapture(0)
 
+unknown_num = 0
+
 # find matches
 while True:
     success, img = cap.read() # give image
@@ -63,8 +58,26 @@ while True:
         best_match_distance = faceDis[matchIndex]
         print(best_match_distance)
         
-        if(best_match_distance > 0.43):
+        if(best_match_distance > 0.43): # unknown face
             print("UNKNOWN")
-        elif matches[matchIndex]:
-            name = classNames[matchIndex].upper()
+            unknown_num += 1 
+
+            if(unknown_num > 3): # check three times that its unknown just to be sure
+                name = input("Welcome new visitor! What is your name? : ")
+                take_picture(name) # enter your name
+
+                unknown_num = 0 # reset unknown count to 0
+                new_img = cv2.imread(f'{path}/{name}.jpg') # update list
+                new_img_rgb = cv2.cvtColor(new_img, cv2.COLOR_BGR2RGB)
+                new_encoding = face_recognition.face_encodings(new_img_rgb)
+                if new_encoding:
+                    encodeListKnown.append(new_encoding[0])
+                    classNames.append(name)
+
+        elif matches[matchIndex]: # found match!
+            unknown_num = 0
+            name = classNames[matchIndex].upper() # name of matched person
             print(name)
+
+
+
