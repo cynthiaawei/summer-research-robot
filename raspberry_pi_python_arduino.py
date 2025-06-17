@@ -10,7 +10,7 @@ from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 import sys
 import os
-import RPi.GPIO as GPIO
+import RPI.GPIO as GPIO
 
 # === Motor Pin Definitions ===
 Motor1_Speed = 38  # PWM 1
