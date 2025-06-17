@@ -11,11 +11,11 @@ Motor3_Dir = 26    # Dir 3
 
 # === GPIO Setup ===
 GPIO.setmode(GPIO.BOARD)
-GPIO.setup(Motor1_Speed, GPIO.OUT, initial=0)
+GPIO.setup(Motor1_Speed, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor1_Dir, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(Motor2_Speed, GPIO.OUT, initial=0)
+GPIO.setup(Motor2_Speed, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor2_Dir, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(Motor3_Speed, GPIO.OUT, initial=0)
+GPIO.setup(Motor3_Speed, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor3_Dir, GPIO.OUT, initial=GPIO.LOW)
 
 # Set PWM frequencies
