@@ -17,16 +17,16 @@ Motor1_Speed = 38  # PWM 1
 Motor1_Dir = 40   # Dir 1
 Motor2_Speed = 32  # PWM 2
 Motor2_Dir = 36    # Dir 2
-Motor3_Speed = 28  # PWM 3
+Motor3_Speed = 16  # PWM 3
 Motor3_Dir = 26    # Dir 3
 
 # === Ultrasonic Sensor ===
 Echo1 = 31
 Echo2 = 29
-Echo3 = 27
-Trig1 = 33
-Trig2 = 35
-Trig3 = 37
+Echo3 = 22
+Trig1 = 11
+Trig2 = 13
+Trig3 = 15
 triggered1 = False
 triggered2 = False
 triggered3 = False
