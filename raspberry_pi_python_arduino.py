@@ -737,11 +737,11 @@ from langchain_core.prompts import ChatPromptTemplate
 import RPi.GPIO as GPIO
 
 # === Motor Pin Definitions ===
-Motor1_Speed = 38  # PWM 1
+Motor1_Speed = 38  # PWM 1 (Front Motor)
 Motor1_Dir = 40   # Dir 1
-Motor2_Speed = 32  # PWM 2
+Motor2_Speed = 32  # PWM 2 (Back Left Motor)
 Motor2_Dir = 36    # Dir 2
-Motor3_Speed = 16  # PWM 3
+Motor3_Speed = 16  # PWM 3 (Back Right Motor)
 Motor3_Dir = 26    # Dir 3
 
 # === Ultrasonic Sensor ===
@@ -760,9 +760,9 @@ GPIO.setmode(GPIO.BOARD)
 GPIO.setup(Echo1, GPIO.IN)
 GPIO.setup(Echo2, GPIO.IN)
 GPIO.setup(Echo3, GPIO.IN)
-GPIO.setup(Trig1, GPIO.OUT)
-GPIO.setup(Trig2, GPIO.OUT)
-GPIO.setup(Trig3, GPIO.OUT)
+GPIO.setup(Trig1, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(Trig2, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(Trig3, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor1_Speed, GPIO.OUT, initial=0)
 GPIO.setup(Motor1_Dir, GPIO.OUT, initial=GPIO.HIGH)
 GPIO.setup(Motor2_Speed, GPIO.OUT, initial=0)
@@ -771,7 +771,7 @@ GPIO.setup(Motor3_Speed, GPIO.OUT, initial=0)
 GPIO.setup(Motor3_Dir, GPIO.OUT, initial=GPIO.HIGH)
 
 # Set PWM frequencies
-freq = 1000
+freq = 1000  # Lowered from 5000 to reduce driver stress
 Motor1_pwm = GPIO.PWM(Motor1_Speed, freq)
 Motor2_pwm = GPIO.PWM(Motor2_Speed, freq)
 Motor3_pwm = GPIO.PWM(Motor3_Speed, freq)
@@ -800,7 +800,7 @@ GPIO.add_event_detect(Echo3, GPIO.RISING, callback=onSignal3)
 gCurSpeed1 = 0
 gCurSpeed2 = 0
 gCurSpeed3 = 0
-gSliderSpeed = 64  # ~25% of 255
+gSliderSpeed = 25  # ~10% of 255
 motor3_compensate = 15  # ~6% of 255
 permStop = True
 interruptRequested = False
@@ -840,7 +840,7 @@ def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, new
     if not interruptRequested:
         gCurSpeed1, gCurSpeed2, gCurSpeed3 = newSpeed1, newSpeed2, newSpeed3
 
-def stopMotors():
+def stopNoTime():
     GPIO.output(dir_list, (GPIO.HIGH, GPIO.HIGH, GPIO.HIGH))
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, 0, gCurSpeed3, 0)
 
@@ -849,17 +849,17 @@ def interruptHandler():
     if triggered1:
         triggered1 = False
         print("Interrupt from sensor 1!")
-        stopMotors()
+        stopNoTime()
         return True
     if triggered2:
         triggered2 = False
         print("Interrupt from sensor 2!")
-        stopMotors()
+        stopNoTime()
         return True
     if triggered3:
         triggered3 = False
         print("Interrupt from sensor 3!")
-        stopMotors()
+        stopNoTime()
         return True
     return False
 
@@ -870,7 +870,7 @@ def startForward():
     Motor1_pwm.ChangeDutyCycle(0)
     Motor2_pwm.ChangeDutyCycle(gSliderSpeed * 100 / 255)
     Motor3_pwm.ChangeDutyCycle((gSliderSpeed + motor3_compensate) * 100 / 255)
-    print(f"Motor2 PWM: {gSliderSpeed * 100 / 255}%, Motor3 PWM: {(gSliderSpeed + motor3_compensate) * 100 / 255}%")
+    print(f"Motor2 PWM: {gSliderSpeed * 100 / 255:.2f}%, Motor3 PWM: {(gSliderSpeed + motor3_compensate) * 100 / 255:.2f}%")
     global gCurSpeed1, gCurSpeed2, gCurSpeed3
     gCurSpeed1 = 0
     gCurSpeed2 = gSliderSpeed
@@ -882,7 +882,7 @@ def startBackward():
     Motor1_pwm.ChangeDutyCycle(0)
     Motor2_pwm.ChangeDutyCycle(gSliderSpeed * 100 / 255)
     Motor3_pwm.ChangeDutyCycle((gSliderSpeed + motor3_compensate) * 100 / 255)
-    print(f"Motor2 PWM: {gSliderSpeed * 100 / 255}%, Motor3 PWM: {(gSliderSpeed + motor3_compensate) * 100 / 255}%")
+    print(f"Motor2 PWM: {gSliderSpeed * 100 / 255:.2f}%, Motor3 PWM: {(gSliderSpeed + motor3_compensate) * 100 / 255:.2f}%")
     global gCurSpeed1, gCurSpeed2, gCurSpeed3
     gCurSpeed1 = 0
     gCurSpeed2 = gSliderSpeed
@@ -894,6 +894,7 @@ def startTurnLeft():
     Motor1_pwm.ChangeDutyCycle(gSliderSpeed * 100 / 255)
     Motor2_pwm.ChangeDutyCycle(gSliderSpeed * 100 / 255)
     Motor3_pwm.ChangeDutyCycle((gSliderSpeed + motor3_compensate) * 100 / 255)
+    print(f"Motor1 PWM: {gSliderSpeed * 100 / 255:.2f}%, Motor2 PWM: {gSliderSpeed * 100 / 255:.2f}%, Motor3 PWM: {(gSliderSpeed + motor3_compensate) * 100 / 255:.2f}%")
     global gCurSpeed1, gCurSpeed2, gCurSpeed3
     gCurSpeed1 = gSliderSpeed
     gCurSpeed2 = gSliderSpeed
@@ -905,6 +906,7 @@ def startTurnRight():
     Motor1_pwm.ChangeDutyCycle(gSliderSpeed * 100 / 255)
     Motor2_pwm.ChangeDutyCycle(gSliderSpeed * 100 / 255)
     Motor3_pwm.ChangeDutyCycle((gSliderSpeed + motor3_compensate) * 100 / 255)
+    print(f"Motor1 PWM: {gSliderSpeed * 100 / 255:.2f}%, Motor2 PWM: {gSliderSpeed * 100 / 255:.2f}%, Motor3 PWM: {(gSliderSpeed + motor3_compensate) * 100 / 255:.2f}%")
     global gCurSpeed1, gCurSpeed2, gCurSpeed3
     gCurSpeed1 = gSliderSpeed
     gCurSpeed2 = gSliderSpeed
@@ -926,7 +928,7 @@ def goForwards(speed, time_ms):
     triggered1 = triggered2 = triggered3 = False
     GPIO.output(dir_list, (GPIO.HIGH, GPIO.HIGH, GPIO.LOW))
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, speed, gCurSpeed3, speed + motor3_compensate)
-    print(f"Motor2 PWM: {speed * 100 / 255}%, Motor3 PWM: {(speed + motor3_compensate) * 100 / 255}%")
+    print(f"Motor2 PWM: {speed * 100 / 255:.2f}%, Motor3 PWM: {(speed + motor3_compensate) * 100 / 255:.2f}%")
     if interruptRequested:
         return
     start = time.time()
@@ -946,11 +948,11 @@ def goBackwards(speed, time_ms):
     triggered1 = triggered2 = triggered3 = False
     GPIO.output(dir_list, (GPIO.HIGH, GPIO.LOW, GPIO.HIGH))
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, speed, gCurSpeed3, speed + motor3_compensate)
-    print(f"Motor2 PWM: {speed * 100 / 255}%, Motor3 PWM: {(speed + motor3_compensate) * 100 / 255}%")
+    print(f"Motor2 PWM: {speed * 100 / 255:.2f}%, Motor3 PWM: {(speed + motor3_compensate) * 100 / 255:.2f}%")
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 2:
+    while time.time() - start < time_ms / 1000:
         trigger_ultrasonic(Trig1)
         trigger_ultrasonic(Trig2)
         trigger_ultrasonic(Trig3)
@@ -961,7 +963,7 @@ def goBackwards(speed, time_ms):
             break
         time.sleep(0.01)
 
-def stopTimed(time_ms):
+def stopMotors(time_ms):
     global interruptRequested
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, 0, gCurSpeed3, 0)
     if time_ms >= 0:
@@ -1021,7 +1023,7 @@ def moveRight(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1:
+    while time.time() - start < time_ms / 1000:
         trigger_ultrasonic(Trig1)
         trigger_ultrasonic(Trig2)
         trigger_ultrasonic(Trig3)
@@ -1082,7 +1084,7 @@ def processCommand(command, time_ms):
     elif command == "moveLeft":
         moveLeft(gSliderSpeed, time_ms)
     elif command == "stop":
-        stopTimed(time_ms)
+        stopMotors(time_ms)
     else:
         print(f"Unknown timed command: {command}")
 
@@ -1307,4 +1309,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")
-
