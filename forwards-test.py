@@ -267,10 +267,12 @@ print("sleep 1s")
 time.sleep(1)
 
 print("Cleaning up GPIO...")
-Motor1_pwm.stop()
-Motor2_pwm.stop()
-Motor3_pwm.stop()
+# Motor1_pwm.stop()
+# Motor2_pwm.stop()
+# Motor3_pwm.stop()
+changeSpeedSmooth(gCurSpeed1, 0,
+                    gCurSpeed2, 0,
+                    gCurSpeed3, 0)
 GPIO.cleanup()
 
-print("Sleeping")
-time.sleep(10000)
+print("Done")
