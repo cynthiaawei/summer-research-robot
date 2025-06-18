@@ -185,7 +185,7 @@ def turnLeft(speed, time_ms):
   triggered2 = False
   triggered3 = False
 
-  GPIO.output(dir_list, (GPIO.HIGH, GPIO.LOW, GPIO.HIGH)) # replaces below code
+  GPIO.output(dir_list, (GPIO.HIGH, GPIO.LOW, GPIO.LOW)) # replaces below code
 
   changeSpeedSmooth(gCurSpeed1, speed,
                     gCurSpeed2, speed,
