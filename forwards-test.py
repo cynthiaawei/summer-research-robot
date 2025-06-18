@@ -264,7 +264,7 @@ turnLeft(25, 2000)
 print("Right \n")
 turnRight(25, 2000)
 print("sleep 1s")
-time.sleep(1000)
+time.sleep(1)
 
 print("Cleaning up GPIO...")
 Motor1_pwm.stop()
