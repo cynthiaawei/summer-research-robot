@@ -89,7 +89,7 @@ def goForwards(speed, time_ms):
     # Set individual motor directions for forward
     GPIO.output(Motor1_Dir, GPIO.HIGH)    # Motor 1 stopped
     GPIO.output(Motor2_Dir, GPIO.HIGH)    # Motor 2 forward
-    GPIO.output(Motor3_Dir, GPIO.LOW)     # Motor 3 forward
+    GPIO.output(Motor3_Dir, GPIO.HIGH)     # Motor 3 forward
 
     changeSpeedSmooth(gCurSpeed1, 0,
                       gCurSpeed2, speed,
