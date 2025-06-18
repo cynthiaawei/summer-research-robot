@@ -15,8 +15,8 @@ Motor1_Speed = 38  # PWM 1 (pin 20, GPIO 20)
 Motor1_Dir = 40    # Dir 1 (pin 38, GPIO 21)
 Motor2_Speed = 32  # PWM 2 (pin 12, GPIO 12)
 Motor2_Dir = 36    # Dir 2 (pin 31, GPIO 16)
-Motor3_Speed = 26  # PWM 3 (pin 37, GPIO 26)
-Motor3_Dir = 16    # Dir 3 (pin 16, GPIO 23)
+Motor3_Speed = 16  # PWM 3
+Motor3_Dir = 26    # Dir 3
 
 # === Ultrasonic Sensor ===
 Echo1 = 31
