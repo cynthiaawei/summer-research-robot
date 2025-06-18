@@ -103,7 +103,7 @@ def goForwards(speed, time_ms):
             print("Movement interrupted by new command")
             break
         
-        if(interruptHandler()): break 
+        #if(interruptHandler()): break 
 
         time.sleep(10/1000)
 
@@ -130,7 +130,7 @@ def goBackwards(speed, time_ms):
             print("Movement interrupted by new command")
             break
         
-        if(interruptHandler()): break 
+        #if(interruptHandler()): break 
 
         time.sleep(10/1000)
 
@@ -173,7 +173,7 @@ def turnRight(speed, time_ms):
     if (commandCharacter):
       print("Turn right interrupted by new command")
       break
-    if interruptHandler():
+    #if interruptHandler():
       break
     time.sleep(10/1000)
   
@@ -198,7 +198,7 @@ def turnLeft(speed, time_ms):
     if (commandCharacter):
       print("Turn left interrupted by new command")
       break
-    if interruptHandler():
+    #if interruptHandler():
       break
     time.sleep(10/1000)
   
@@ -223,7 +223,7 @@ def moveRight(speed, time_ms):
     if (commandCharacter):
       print("Move right interrupted by new command")
       break
-    if interruptHandler():
+    #if interruptHandler():
       break
     time.sleep(10/1000)
   
@@ -248,8 +248,8 @@ def moveLeft(speed, time_ms):
     if (commandCharacter):
       print("Move left interrupted by new command")
       break
-    if interruptHandler():
-      break
+    #if interruptHandler():
+    #  break
     time.sleep(10/1000)
 
 
