@@ -6,8 +6,8 @@ Motor1_Speed = 38  # PWM 1
 Motor1_Dir = 40   # Dir 1
 Motor2_Speed = 32  # PWM 2
 Motor2_Dir = 36    # Dir 2
-Motor3_Speed = 26  # PWM 3
-Motor3_Dir = 16    # Dir 3
+Motor3_Speed = 16  # PWM 3
+Motor3_Dir = 26    # Dir 3
 
 # === GPIO Setup ===
 GPIO.setmode(GPIO.BOARD)
