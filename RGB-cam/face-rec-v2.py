@@ -9,10 +9,10 @@ def take_picture(name):
     success, image = camera.read() # returns 2 values
 
     if success:
-        path = os.path.join('/Users/cynthia/face-recognition/images', name + '.jpg')
+        path = os.path.join('/home/robot/summer-research-robot/RGB-cam/images', name + '.jpg')
         cv2.imwrite(path, image)
 
-path = '/Users/cynthia/face-recognition/images'
+path = '/home/robot/summer-research-robot/RGB-cam/images'
 images = []
 classNames = []
 myList = os.listdir(path)
