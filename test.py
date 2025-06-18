@@ -508,59 +508,56 @@ def processCommand(command, time_ms):
 
 # === KEYBOARD CONTROL FUNCTION (FIXED) ===
 def keyboard_control_continuous():
-    """Continuous keyboard control mode using arrow keys"""
     global keyboard_mode_active, exit_keyboard_mode
     
     print("🎮 Continuous keyboard mode activated!")
     print("Controls: ↑=Forward, ↓=Backward, ←=Turn Left, →=Turn Right")
     print("          A=Strafe Left, D=Strafe Right, SPACE=Stop, Q=Exit")
-    print("Press keys now...")
-    
-    current_movement = None
-    
+
+    last_key = None
+
     try:
         with KeyboardHandler() as kb:
             while keyboard_mode_active and not exit_keyboard_mode:
                 key = kb.get_key()
-                
+
                 if key:
-                    print(f"Key pressed: {key}")  # Debug output
-                    
-                    # Handle exit
                     if key == 'q' or key == 'ctrl_c':
                         print("🚪 Exiting keyboard mode...")
                         processImmediateCommand("stop")
                         exit_keyboard_mode = True
                         break
-                    
-                    # Handle movement commands
-                    new_movement = None
-                    if key == 'up':
-                        new_movement = "forward"
-                    elif key == 'down':
-                        new_movement = "backward"
-                    elif key == 'left':
-                        new_movement = "left"
-                    elif key == 'right':
-                        new_movement = "right"
-                    elif key == 'a':
-                        new_movement = "moveleft"
-                    elif key == 'd':
-                        new_movement = "moveright"
-                    elif key == 'space':
-                        new_movement = "stop"
-                    
-                    # Only process if movement changed
-                    if new_movement and new_movement != current_movement:
-                        processImmediateCommand(new_movement)
-                        current_movement = new_movement
-                        if new_movement == "stop":
-                            current_movement = None
-                
-                time.sleep(0.05)  # 20Hz polling rate
-                
+
+                    # If a new movement key is pressed
+                    if key != last_key:
+                        if key == 'up':
+                            processImmediateCommand("forward")
+                        elif key == 'down':
+                            processImmediateCommand("backward")
+                        elif key == 'left':
+                            processImmediateCommand("left")
+                        elif key == 'right':
+                            processImmediateCommand("right")
+                        elif key == 'a':
+                            processImmediateCommand("moveleft")
+                        elif key == 'd':
+                            processImmediateCommand("moveright")
+                        elif key == 'space':
+                            processImmediateCommand("stop")
+                        
+                        last_key = key
+                        print(f"▶️ Key pressed: {key}")
+
+                else:
+                    if last_key:
+                        print(f"⏹️ Key released: {last_key}")
+                        processImmediateCommand("stop")
+                        last_key = None
+
+                time.sleep(0.05)
+
     except Exception as e:
-        print(f"⚠️ Keyboard control error: {e}")
+        print(f"⚠️ Keyboard error: {e}")
     finally:
         processImmediateCommand("stop")
         print("🔄 Keyboard mode ended")
