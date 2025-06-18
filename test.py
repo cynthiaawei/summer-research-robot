@@ -1,55 +1,56 @@
 import RPi.GPIO as GPIO
 import time
 
-# === GPIO Board Mode ===
 GPIO.setmode(GPIO.BOARD)
 
-# === Motor PWM Pins ===
-Motor1_Speed = 38  # Motor 1 - PWM
-Motor2_Speed = 32  # Motor 2 - PWM
-Motor3_Speed = 16  # Motor 3 - PWM
+# === MotorShield 1 ===
+Motor1_PWM = 38  # GPIO20
+Motor1_DIR = 40  # GPIO21
 
-# === Setup Pins ===
-GPIO.setup(Motor1_Speed, GPIO.OUT)
-GPIO.setup(Motor2_Speed, GPIO.OUT)
-GPIO.setup(Motor3_Speed, GPIO.OUT)
+Motor2_PWM = 32  # GPIO12 (PWM0)
+Motor2_DIR = 36  # GPIO16
 
-# === Set PWM frequency (1kHz is standard for DC motors) ===
+# === MotorShield 2 ===
+Motor3_PWM = 26  # GPIO7
+Motor3_DIR = 28  # GPIO1 (⚠️ ID_SD - only use if I2C is disabled)
+
+# === Setup pins
+GPIO.setup(Motor1_DIR, GPIO.OUT)
+GPIO.setup(Motor1_PWM, GPIO.OUT)
+
+GPIO.setup(Motor2_DIR, GPIO.OUT)
+GPIO.setup(Motor2_PWM, GPIO.OUT)
+
+GPIO.setup(Motor3_DIR, GPIO.OUT)
+GPIO.setup(Motor3_PWM, GPIO.OUT)
+
+# === Setup PWM objects
 freq = 1000
-motor1_pwm = GPIO.PWM(Motor1_Speed, freq)
-motor2_pwm = GPIO.PWM(Motor2_Speed, freq)
-motor3_pwm = GPIO.PWM(Motor3_Speed, freq)
+pwm1 = GPIO.PWM(Motor1_PWM, freq)
+pwm2 = GPIO.PWM(Motor2_PWM, freq)
+pwm3 = GPIO.PWM(Motor3_PWM, freq)
 
-# === Start with 0% duty cycle ===
-motor1_pwm.start(0)
-motor2_pwm.start(0)
-motor3_pwm.start(0)
+pwm1.start(0)
+pwm2.start(0)
+pwm3.start(0)
 
 try:
-    print("Testing Motor 1 (PWM 38)...")
-    motor1_pwm.ChangeDutyCycle(50)
+    print("Testing Motor 1 (Shield 1 - Pin 38/40)")
+    GPIO.output(Motor1_DIR, GPIO.HIGH)
+    pwm1.ChangeDutyCycle(50)
     time.sleep(2)
-    motor1_pwm.ChangeDutyCycle(0)
+    pwm1.ChangeDutyCycle(0)
     time.sleep(1)
 
-    print("Testing Motor 2 (PWM 32)...")
-    motor2_pwm.ChangeDutyCycle(50)
+    print("Testing Motor 2 (Shield 1 - Pin 32/36)")
+    GPIO.output(Motor2_DIR, GPIO.HIGH)
+    pwm2.ChangeDutyCycle(50)
     time.sleep(2)
-    motor2_pwm.ChangeDutyCycle(0)
+    pwm2.ChangeDutyCycle(0)
     time.sleep(1)
 
-    print("Testing Motor 3 (PWM 16)...")
-    motor3_pwm.ChangeDutyCycle(50)
+    print("Testing Motor 3 (Shield 2 - Pin 26/28)")
+    GPIO.output(Motor3_DIR, GPIO.HIGH)
+    pwm3.ChangeDutyCycle(50)
     time.sleep(2)
-    motor3_pwm.ChangeDutyCycle(0)
-    time.sleep(1)
-
-except KeyboardInterrupt:
-    print("Test interrupted.")
-
-finally:
-    print("Cleaning up GPIO...")
-    motor1_pwm.stop()
-    motor2_pwm.stop()
-    motor3_pwm.stop()
-    GPIO.cleanup()
+    pwm3.
