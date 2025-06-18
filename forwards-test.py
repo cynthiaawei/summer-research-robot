@@ -273,6 +273,7 @@ print("Cleaning up GPIO...")
 changeSpeedSmooth(gCurSpeed1, 0,
                     gCurSpeed2, 0,
                     gCurSpeed3, 0)
+time.sleep(1000)
 GPIO.cleanup()
 
 print("Done")
