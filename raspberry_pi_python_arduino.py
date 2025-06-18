@@ -685,8 +685,39 @@ permStop = True
 interruptRequested = False
 spd_list = [Motor1_Speed, Motor2_Speed, Motor3_Speed]
 dir_list = [Motor1_Dir, Motor2_Dir, Motor3_Dir]
+distanceStop = 30 #distance of the objects to the robot to stop
 commandCharacter = ""
 movement_lock = threading.Lock()
+
+def getDistance(trigPin, echoPin):
+    # send signal through trig, measure time to echo and then calculate
+    waiting = True
+    GPIO.output(trigPin, GPIO.HIGH)
+    start = time.time()
+    while(waiting):
+        if(GPIO.input(echoPin)):
+            end = time.time()
+            waiting = False
+    return ((end-start)/343)*100 #distance in cm
+
+#interrupt the main processes when ultrasonic sensors detect smth within distanceStop (30 cm)
+def nearObject(distance1, distance2, distance3):
+    if (distance3 < distanceStop):
+        global triggered3 
+        triggered3 = True
+    if(distance2 < distanceStop):
+        global triggered2 
+        triggered2 = True
+    if(distance1 < distanceStop):
+        global triggered1 
+        triggered1 = True
+
+def thread_sensors(Echo1, Echo2, Echo3, Trig1, Trig2, Trig3):
+    dist1 = getDistance(Trig1, Echo1)
+    dist2 = getDistance(Trig2, Echo2)
+    dist3 = getDistance(Trig3, Echo3)
+
+    
 
 # === Helper: Ramp motor speeds smoothly ===
 def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, newSpeed3):
@@ -1140,6 +1171,7 @@ async def handle_conversation():
     global keyboard_mode_active, exit_keyboard_mode
     context = ""
     print("Welcome to the AI Chatbot! Type 'exit' to quit.")
+    sensor_thread = threading.Thread(target = <functionName>, )
     while True:
         mode = input("Use (s)peech, (t)ype or (k)eyboard? ").strip().lower()
         if mode == 's':
