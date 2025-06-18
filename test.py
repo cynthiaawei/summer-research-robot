@@ -1,69 +1,61 @@
 import RPi.GPIO as GPIO
 import time
 
-GPIO.setmode(GPIO.BOARD)
-
-# === Pin Definitions (confirmed by you) ===
-Motor1_Speed = 38  # GPIO20
-Motor1_Dir   = 40  # GPIO21
-
-Motor2_Speed = 32  # GPIO12 (PWM0)
-Motor2_Dir   = 36  # GPIO16
-
-Motor3_Speed = 16  # GPIO23
-Motor3_Dir   = 26  # GPIO7
+# === Ultrasonic Sensor Pins ===
+Echo1 = 31
+Echo2 = 29
+Echo3 = 22
+Trig1 = 11
+Trig2 = 13
+Trig3 = 15
 
 # === GPIO Setup ===
-GPIO.setup(Motor1_Speed, GPIO.OUT)
-GPIO.setup(Motor1_Dir, GPIO.OUT)
+GPIO.setmode(GPIO.BOARD)
+GPIO.setup(Echo1, GPIO.IN)
+GPIO.setup(Echo2, GPIO.IN)
+GPIO.setup(Echo3, GPIO.IN)
+GPIO.setup(Trig1, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(Trig2, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(Trig3, GPIO.OUT, initial=GPIO.LOW)
 
-GPIO.setup(Motor2_Speed, GPIO.OUT)
-GPIO.setup(Motor2_Dir, GPIO.OUT)
+def get_distance(trig_pin, echo_pin):
+    # Send trigger pulse
+    GPIO.output(trig_pin, True)
+    time.sleep(0.00001)  # 10us pulse
+    GPIO.output(trig_pin, False)
 
-GPIO.setup(Motor3_Speed, GPIO.OUT)
-GPIO.setup(Motor3_Dir, GPIO.OUT)
+    # Wait for echo start
+    pulse_start = time.time()
+    while GPIO.input(echo_pin) == 0:
+        pulse_start = time.time()
+    # Wait for echo end
+    pulse_end = time.time()
+    while GPIO.input(echo_pin) == 1:
+        pulse_end = time.time()
 
-# === PWM Setup (1kHz) ===
-freq = 1000
-pwm1 = GPIO.PWM(Motor1_Speed, freq)
-pwm2 = GPIO.PWM(Motor2_Speed, freq)
-pwm3 = GPIO.PWM(Motor3_Speed, freq)
-
-pwm1.start(0)
-pwm2.start(0)
-pwm3.start(0)
+    # Calculate distance (speed of sound = 34300 cm/s, divided by 2 for round trip)
+    pulse_duration = pulse_end - pulse_start
+    distance = pulse_duration * 17150  # 34300 / 2
+    distance = round(distance, 2)
+    return distance
 
 try:
-    # === Motor 1 Test ===
-    print("▶️ Testing Motor 1 (Pin 38/40)")
-    GPIO.output(Motor1_Dir, GPIO.HIGH)
-    pwm1.ChangeDutyCycle(50)
-    time.sleep(2)
-    pwm1.ChangeDutyCycle(0)
-    time.sleep(1)
+    print("Starting ultrasonic sensor test. Place objects in front of sensors...")
+    while True:
+        # Measure distance for each sensor
+        dist1 = get_distance(Trig1, Echo1)
+        dist2 = get_distance(Trig2, Echo2)
+        dist3 = get_distance(Trig3, Echo3)
 
-    # === Motor 2 Test ===
-    print("▶️ Testing Motor 2 (Pin 32/36)")
-    GPIO.output(Motor2_Dir, GPIO.HIGH)
-    pwm2.ChangeDutyCycle(50)
-    time.sleep(2)
-    pwm2.ChangeDutyCycle(0)
-    time.sleep(1)
-
-    # === Motor 3 Test ===
-    print("▶️ Testing Motor 3 (Pin 16/26)")
-    GPIO.output(Motor3_Dir, GPIO.HIGH)
-    pwm3.ChangeDutyCycle(50)
-    time.sleep(2)
-    pwm3.ChangeDutyCycle(0)
-    time.sleep(1)
+        # Print distances
+        print(f"Sensor 1 (Echo1/Trig1) Distance: {dist1} cm")
+        print(f"Sensor 2 (Echo2/Trig2) Distance: {dist2} cm")
+        print(f"Sensor 3 (Echo3/Trig3) Distance: {dist3} cm")
+        print("---")
+        time.sleep(1)  # Update every second
 
 except KeyboardInterrupt:
-    print("❌ Interrupted by user.")
-
+    print("\nTest stopped by user")
 finally:
-    print("🧼 Cleaning up GPIO...")
-    pwm1.stop()
-    pwm2.stop()
-    pwm3.stop()
     GPIO.cleanup()
+    print("GPIO cleaned up")
