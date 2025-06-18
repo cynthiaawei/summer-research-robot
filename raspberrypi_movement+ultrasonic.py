@@ -136,20 +136,12 @@ def getdistance(trigpin, echopin):
     pulse_duration= pulse_end-pulse_start
     distance= pulse_duration*17150
     distance = round(distance, 2)
-
-    if echopin==Echo1:
-        triggered1=False
-    if echopin==Echo2:
-        triggered2=False
-    if echopin==Echo3:
-        triggered3=False
-    
     return distance
 def interruptHandler():
     distances = [
-        getdistance(Trig1, Echo1) if triggered1 else float('inf'),
-        getdistance(Trig2, Echo2) if triggered2 else float('inf'),
-        getdistance(Trig3, Echo3) if triggered3 else float('inf')
+        getdistance(Trig1, Echo1),
+        getdistance(Trig2, Echo2),
+        getdistance(Trig3, Echo3)
     ]
     
     for i, dist in enumerate(distances):
