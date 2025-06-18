@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import time
+from collections import deque
 
 class handDetector():
     def __init__(self, mode=False, maxHands = 2, detectionCon=0.5,trackCon=0.5):
@@ -44,28 +45,112 @@ class handDetector():
 
         return lmList
 
+def is_right_hand(detector):
+    if detector.results.multi_handedness:
+        return detector.results.multi_handedness[0].classification[0].label == "Right"
+    return False
+
+def high_five_position(lmList, detector):
+    if len(lmList)  < 21: return False
+
+     # Each finger: [tip, dip, pip, mcp]
+    fingers = [
+        [4, 3, 2, 1],    # Thumb
+        [8, 7, 6, 5],    # Index
+        [12,11,10,9],    # Middle
+        [16,15,14,13],   # Ring
+        [20,19,18,17]    # Pinky
+    ]
+
+    for finger in fingers:
+        for i in range(len(finger)-1): # loop through each finger
+            if lmList[finger[i]][2] >= lmList[finger[i+1]][2]: # y position of tip should be lower than mcp
+                return False # if not lower, fingers are bent
+
+    wrist_y = lmList[0][2] # wrist position
+    for tip in [4, 8, 12, 16, 20]:
+        if lmList[tip][2] >= wrist_y: # fingers should be higher than wrist
+            return False
+    
+
+    joints = list(zip(*fingers)) # transpose fingers 
+    '''
+    joints = [ (thumb, index, middle, ring, pinky)
+        [4, 8, 12, 16, 20], tips
+        [3, 7, 11, 15, 19], dips
+        [2, 6, 10, 14, 18]. pips
+        [1, 5, 9, 14, 17] mcps
+    ]
+    '''
+            
+    if is_right_hand(detector) :
+        for joint in joints: # for every joint
+            for i in range(1, 4): # all fingers except pinky
+                if lmList[joint[i]][1] >= lmList[joint[i + 1]][1]: 
+                    return False # pinky should have a lower x value then thumb
+    else :
+        for joint in joints: # for every joint
+            for i in range(1, 4): # pinky to thumb
+                if lmList[joint[i]][1] <= lmList[joint[i + 1]][1]: 
+                    return False # pinky should have a greater x value then thumb
+    return True
+
+# Keep last few X-positions of the index fingertip and wrist
+index_x_history = deque(maxlen=10)
+
+def is_waving(lmList, detector):
+    global waving_counter
+    if len(lmList) < 21:
+        return False
+    
+    if not high_five_position(lmList, detector):
+        return False
+    
+    index_x = lmList[8][1]  # index fingertip x position
+    index_x_history.append(index_x) # add new position
+    
+    # Check if index finger tip is swinging side to side
+    index_motion = max(index_x_history) - min(index_x_history)
+
+    return index_motion > 40
+
+def fingers_close_together(lmList):
+    if len(lmList) < 21:
+        return False
+    
+    tips = [4, 8, 12, 16, 20]
+    for i in range(1, 4):
+        if abs(lmList[tips[i]][1] - lmList[tips[i+1]][1]) > 50 :
+            return False
+    return True
+
+def is_shaking_hands(lmList):
+    global shaking_counter
+    if not fingers_close_together(lmList): return False
+    if abs(lmList[5][2]-lmList[0][2]) > 50 :
+        return False
+    return True
 
 def main():
-    pTime = 0
-    cTime = 0
     cap = cv2.VideoCapture(0)
     detector = handDetector()
-
     while True:
         success, img = cap.read()
+        img = cv2.flip(img, 1)
         img = detector.findHands(img)
         lmList = detector.findPosition(img)
         if len(lmList) != 0:
-            print(lmList[4])
-
-        cTime = time.time()
-        fps = 1/(cTime-pTime)
-        pTime = cTime
-
-        cv2.putText(img, str(int(fps)), (10,70), cv2.FONT_HERSHEY_PLAIN, 3, (255, 0, 255), 3)
-
+            if is_waving(lmList, detector):
+                print("waving")
+            elif is_shaking_hands(lmList):
+                print("shaking hands")
+            else :
+                print("")
+        else :
+            print("")
         cv2.imshow("Image", img)
         cv2.waitKey(1)
+
 
 
 if __name__ == "__main__" :
