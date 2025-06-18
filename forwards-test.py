@@ -254,20 +254,23 @@ def moveLeft(speed, time_ms):
 
 
 
-async def main():
-    
-    try:
-        goForwards(25, 2000)
-        goBackwards(25, 2000)
-        turnLeft(25, 2000)
-        turnRight(25, 2000)
-        moveLeft(25, 2000)
-    except KeyboardInterrupt:
-        print("\n👋 Shutting down...")
-        time.sleep(10000)
-    finally:
-        print("Cleaning up GPIO...")
-        Motor1_pwm.stop()
-        Motor2_pwm.stop()
-        Motor3_pwm.stop()
-        GPIO.cleanup()
+print("Run Start\n ")
+print("Forwards \n")
+goForwards(25, 2000)
+print("Backwards \n")
+goBackwards(25, 2000)
+print("Left '\n")
+turnLeft(25, 2000)
+print("Right \n")
+turnRight(25, 2000)
+print("sleep 1s")
+time.sleep(1000)
+
+print("Cleaning up GPIO...")
+Motor1_pwm.stop()
+Motor2_pwm.stop()
+Motor3_pwm.stop()
+GPIO.cleanup()
+
+print("Sleeping")
+time.sleep(10000)
