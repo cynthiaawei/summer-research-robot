@@ -116,7 +116,7 @@ def goBackwards(speed, time_ms):
     # Set individual motor directions for backward
     GPIO.output(Motor1_Dir, GPIO.HIGH)    # Motor 1 stopped
     GPIO.output(Motor2_Dir, GPIO.LOW)     # Motor 2 backward
-    GPIO.output(Motor3_Dir, GPIO.HIGH)    # Motor 3 backward
+    GPIO.output(Motor3_Dir, GPIO.LOW)    # Motor 3 backward
 
     changeSpeedSmooth(gCurSpeed1, 0,
                       gCurSpeed2, speed,
