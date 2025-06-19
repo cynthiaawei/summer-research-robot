@@ -18,7 +18,7 @@ GPIO.setup(Trig1, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Trig2, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Trig3, GPIO.OUT, initial=GPIO.LOW)
 
-def get_distance(trig_pin, echo_pin, timeout=1.0):
+def get_distance(trig_pin, echo_pin, timeout=0.5):
     """
     Get distance from ultrasonic sensor with timeout protection
     Returns -1 if measurement fails
@@ -36,68 +36,34 @@ def get_distance(trig_pin, echo_pin, timeout=1.0):
         # Wait for echo start with timeout
         timeout_start = time.time()
         while GPIO.input(echo_pin) == 0:
-            pulse_start = time.time()
-            if pulse_start - timeout_start > timeout:
-                print(f"Timeout waiting for echo start on pin {echo_pin}")
+            if time.time() - timeout_start > timeout:
                 return -1
+        
+        # Record when echo goes HIGH
+        pulse_start = time.time()
         
         # Wait for echo end with timeout
         timeout_start = time.time()
         while GPIO.input(echo_pin) == 1:
-            pulse_end = time.time()
-            if pulse_end - timeout_start > timeout:
-                print(f"Timeout waiting for echo end on pin {echo_pin}")
+            if time.time() - timeout_start > timeout:
                 return -1
+        
+        # Record when echo goes LOW
+        pulse_end = time.time()
         
         # Calculate distance
         pulse_duration = pulse_end - pulse_start
         distance = pulse_duration * 17150  # Speed of sound / 2
         distance = round(distance, 2)
         
-        # Validate reasonable distance (HC-SR04 range is typically 2-400cm)
-        if distance < 2 or distance > 400:
-            print(f"Invalid distance reading: {distance}cm on pin {echo_pin}")
-            return -1
-            
         return distance
         
     except Exception as e:
-        print(f"Error reading sensor on pins {trig_pin}/{echo_pin}: {e}")
         return -1
 
-def test_individual_sensor(trig_pin, echo_pin, sensor_name):
-    """Test individual sensor to help debug"""
-    print(f"Testing {sensor_name} (Trig: {trig_pin}, Echo: {echo_pin})")
-    
-    # Check initial pin states
-    echo_state = GPIO.input(echo_pin)
-    print(f"Initial echo pin state: {echo_state}")
-    
-    for i in range(3):
-        distance = get_distance(trig_pin, echo_pin)
-        if distance > 0:
-            print(f"  Attempt {i+1}: {distance} cm")
-        else:
-            print(f"  Attempt {i+1}: Failed")
-        time.sleep(0.1)
-    print()
-
 try:
-    print("Starting ultrasonic sensor diagnostics...")
-    print("Initial pin state check:")
-    print(f"Echo1 ({Echo1}): {GPIO.input(Echo1)}")
-    print(f"Echo2 ({Echo2}): {GPIO.input(Echo2)}")
-    print(f"Echo3 ({Echo3}): {GPIO.input(Echo3)}")
-    print()
-    
-    # Test each sensor individually first
-    print("Testing individual sensors:")
-    test_individual_sensor(Trig1, Echo1, "Sensor 1")
-    test_individual_sensor(Trig2, Echo2, "Sensor 2")
-    test_individual_sensor(Trig3, Echo3, "Sensor 3")
-    
-    print("Starting continuous monitoring...")
-    print("Place objects in front of sensors...")
+    print("Starting ultrasonic sensor monitoring...")
+    print("Press Ctrl+C to stop...")
     
     while True:
         # Measure distance for each sensor
@@ -111,12 +77,9 @@ try:
         print(f"Sensor 3: {dist3 if dist3 > 0 else 'FAIL'} cm")
         print("---")
         
-        time.sleep(1)  # Update every second
+        time.sleep(1)
 
 except KeyboardInterrupt:
-    print("\nTest stopped by user")
-except Exception as e:
-    print(f"Unexpected error: {e}")
+    print("\nStopped by user")
 finally:
     GPIO.cleanup()
-    print("GPIO cleaned up")
