@@ -61,9 +61,6 @@ gSliderSpeed = 25  # Max 85
 motor3_compensate = 15
 permStop = True
 interruptRequested = False
-spd_list = [Motor1_Speed, Motor2_Speed, Motor3_Speed]
-dir_list = [Motor1_Dir, Motor2_Dir, Motor3_Dir]
-commandCharacter = ""
 movement_lock = threading.Lock()
 keyboard_mode_active = False
 exit_keyboard_mode = False
@@ -118,7 +115,6 @@ def get_distance(trig_pin, echo_pin, timeout=0.5):
 
 def interruptHandler():
     global triggered1, triggered2, triggered3, interruptRequested
-    # Only check distances if robot is moving
     if gCurSpeed1 != 0 or gCurSpeed2 != 0 or gCurSpeed3 != 0:
         if triggered1 or triggered2 or triggered3:
             distances = [
@@ -126,7 +122,7 @@ def interruptHandler():
                 get_distance(Trig2, Echo2) if triggered2 else float('inf'),
                 get_distance(Trig3, Echo3) if triggered3 else float('inf')
             ]
-            triggered1 = triggered2 = triggered3 = False  # Reset triggers after checking
+            triggered1 = triggered2 = triggered3 = False
             for i, dist in enumerate(distances):
                 if dist > 0 and dist < 30:
                     print(f"Interrupt from sensor {i+1}! Distance: {dist}cm")
@@ -277,10 +273,7 @@ def goForwards(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1000 and not interruptRequested:
-        if commandCharacter:
-            print("Movement interrupted by new command")
-            break
+    while time.time() - start < time_ms / 1000:
         if interruptHandler():
             break
         time.sleep(0.01)
@@ -296,10 +289,7 @@ def goBackwards(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1000 and not interruptRequested:
-        if commandCharacter:
-            print("Movement interrupted by new command")
-            break
+    while time.time() - start < time_ms / 1000:
         if interruptHandler():
             break
         time.sleep(0.01)
@@ -311,9 +301,6 @@ def stopMotors(time_ms):
     if time_ms >= 0:
         start = time.time()
         while time.time() - start < time_ms / 1000:
-            if commandCharacter:
-                print("Stop interrupted by new command")
-                break
             time.sleep(0.01)
     else:
         global permStop
@@ -330,10 +317,7 @@ def turnRight(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1000 and not interruptRequested:
-        if commandCharacter:
-            print("Turn right interrupted by new command")
-            break
+    while time.time() - start < time_ms / 1000:
         if interruptHandler():
             break
         time.sleep(0.01)
@@ -349,10 +333,7 @@ def turnLeft(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1000 and not interruptRequested:
-        if commandCharacter:
-            print("Turn left interrupted by new command")
-            break
+    while time.time() - start < time_ms / 1000:
         if interruptHandler():
             break
         time.sleep(0.01)
@@ -368,10 +349,7 @@ def moveRight(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1000 and not interruptRequested:
-        if commandCharacter:
-            print("Move right interrupted by new command")
-            break
+    while time.time() - start < time_ms / 1000:
         if interruptHandler():
             break
         time.sleep(0.01)
@@ -387,49 +365,44 @@ def moveLeft(speed, time_ms):
     if interruptRequested:
         return
     start = time.time()
-    while time.time() - start < time_ms / 1000 and not interruptRequested:
-        if commandCharacter:
-            print("Move left interrupted by new command")
-            break
+    while time.time() - start < time_ms / 1000:
         if interruptHandler():
             break
         time.sleep(0.01)
 
 # === Command Processing Functions ===
-def processImmediateCommand(command):
-    command = command.strip().lower()
-    if command == "forward":
-        startForward()
-    elif command == "backward":
-        startBackward()
-    elif command == "left":
-        startTurnLeft()
-    elif command == "right":
-        startTurnRight()
-    elif command == "moveleft":
-        startMoveLeft()
-    elif command == "moveright":
-        startMoveRight()
-    elif command == "stop":
-        immediateStop()
+def processImmediateCommand(cmd):
+    key = cmd.lower()
+    mapping = {
+        'forward': startForward,
+        'backward': startBackward,
+        'turnleft': startTurnLeft,
+        'turnright': startTurnRight,
+        'moveleft': startMoveLeft,
+        'moveright': startMoveRight,
+        'stop': immediateStop
+    }
+    fn = mapping.get(key)
+    if fn:
+        fn()
 
-async def processCommandAsync(command, time_ms):
-    if command == "forward":
-        goForwards(gSliderSpeed, time_ms)
-    elif command == "backward":
-        goBackwards(gSliderSpeed, time_ms)
-    elif command == "turnRight":
-        turnRight(gSliderSpeed, time_ms)
-    elif command == "turnLeft":
-        turnLeft(gSliderSpeed, time_ms)
-    elif command == "moveRight":
-        moveRight(gSliderSpeed, time_ms)
-    elif command == "moveLeft":
-        moveLeft(gSliderSpeed, time_ms)
-    elif command == "stop":
-        stopMotors(time_ms)
-    else:
-        print("Unknown timed command:", command)
+async def processCommandAsync(cmd, dur):
+    key = cmd.lower()
+    timed_map = {
+        'forward': goForwards,
+        'backward': goBackwards,
+        'turnleft': turnLeft,
+        'turnright': turnRight,
+        'moveleft': moveLeft,
+        'moveright': moveRight,
+        'stop': stopMotors
+    }
+    fn = timed_map.get(key)
+    if fn:
+        if key == 'stop':
+            fn(dur)
+        else:
+            fn(gSliderSpeed, dur)
 
 async def process_user_input(user_input, context):
     long_instruction = ""
@@ -465,9 +438,12 @@ async def process_user_input(user_input, context):
     if contain_instructions:
         print("Bot:", long_instruction.strip())
         for command, duration in command_list:
-            global commandCharacter
+            global interruptRequested
+            interruptRequested = False  # Reset interrupt flag for each new command
             await processCommandAsync(command, duration)
-            commandCharacter = ""
+            if interruptRequested:
+                print("Command interrupted by sensor")
+                break
         return True
     return False
 
@@ -598,7 +574,6 @@ def keyboard_control_continuous():
                     print(f"⏹️ {key.upper()} released → stop")
             last_key_state = current_key_states.copy()
             time.sleep(0.02)
-            # Check for interrupts during keyboard control
             if gCurSpeed1 != 0 or gCurSpeed2 != 0 or gCurSpeed3 != 0:
                 interruptHandler()
         except Exception as e:
