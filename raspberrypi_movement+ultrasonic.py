@@ -68,12 +68,14 @@ main_loop = None
 def ultrasonic_callback(trig_pin, echo_pin, sensor_id):
     """Callback for ultrasonic sensor to measure distance and stop if < 30cm"""
     with movement_lock:
-        distance = get_distance(trig_pin, echo_pin)
-        if distance > 0 and distance < 30:
-            print(f"Interrupt from sensor {sensor_id}! Distance: {distance}cm")
-            global interruptRequested
-            interruptRequested = True
-            stopNoTime()
+        # Only process if robot is moving
+        if gCurSpeed1 != 0 or gCurSpeed2 != 0 or gCurSpeed3 != 0:
+            distance = get_distance(trig_pin, echo_pin)
+            if distance > 0 and distance < 30:
+                print(f"Interrupt from sensor {sensor_id}! Distance: {distance}cm")
+                global interruptRequested
+                interruptRequested = True
+                stopNoTime()
 
 def onSignal1(channel):
     ultrasonic_callback(Trig1, Echo1, 1)
@@ -84,20 +86,16 @@ def onSignal2(channel):
 def onSignal3(channel):
     ultrasonic_callback(Trig3, Echo3, 3)
 
-# Setup GPIO event detection for ultrasonic sensors
+# Setup GPIO event detection with debouncing
 GPIO.add_event_detect(Echo1, GPIO.RISING, callback=onSignal1, bouncetime=100)
 GPIO.add_event_detect(Echo2, GPIO.RISING, callback=onSignal2, bouncetime=100)
-GPIO.add_event_detect(Echo3, GPIO.RISING, callback=onSignal3, bouncetime=100)  # Fixed typo
+GPIO.add_event_detect(Echo3, GPIO.RISING, callback=onSignal3, bouncetime=100)
 
 def get_distance(trig_pin, echo_pin, timeout=0.5):
-    """
-    Get distance from ultrasonic sensor with timeout protection
-    Returns -1 if measurement fails
-    """
+    """Get distance from ultrasonic sensor with timeout protection"""
     try:
         GPIO.output(trig_pin, False)
         time.sleep(0.000002)  # 2us settle time
-        
         GPIO.output(trig_pin, True)
         time.sleep(0.00001)  # 10us pulse
         GPIO.output(trig_pin, False)
@@ -115,13 +113,10 @@ def get_distance(trig_pin, echo_pin, timeout=0.5):
                 return -1
         
         pulse_end = time.time()
-        
         pulse_duration = pulse_end - pulse_start
         distance = pulse_duration * 17150
         distance = round(distance, 2)
-        
         return distance
-        
     except Exception as e:
         print(f"Distance measurement error: {e}")
         return -1
@@ -427,7 +422,7 @@ async def process_user_input(user_input, context):
             time_in_ms = time_in_ms or 2000
         if direction and (time_in_ms is not None):
             long_instruction += f"{direction} {time_in_ms} "
-            command_list.append((direction, time_in_ms))
+            command_list.append((direction, time_ms))
             contain_instructions = True
         elif direction == "stop":
             long_instruction += "stop -1"
@@ -444,7 +439,6 @@ async def process_user_input(user_input, context):
     return False
 
 def speak(text):
-    """Text-to-speech function with error handling"""
     system = platform.system().lower()
     try:
         if system == "windows":
@@ -472,40 +466,29 @@ def speak(text):
                 subprocess.run(["osascript", "-e", applescript], check=True)
             else:
                 raise subprocess.CalledProcessError(1, "TTS failed")
-        except Exception as e:
-            print(f"🔊 TTS: {text} (Error: {e})")
+        except:
+            print(f"🔊 TTS: {text}")
 
 def listen():
-    """Speech recognition function with error handling"""
     r = sr.Recognizer()
-    try:
-        with sr.Microphone() as source:
-            print("🎙️ Listening...")
-            audio = r.listen(source, timeout=5, phrase_time_limit=10)
+    with sr.Microphone() as source:
+        print("🎙️ Listening...")
+        audio = r.listen(source)
+        try:
             text = r.recognize_google(audio)
             print(f"🗣️ You said: {text}")
             return text.lower()
-    except sr.UnknownValueError:
-        print("❌ Didn't catch that.")
-    except sr.RequestError as e:
-        print(f"❌ API error: {e}")
-    except sr.WaitTimeoutError:
-        print("❌ Listening timeout.")
-    except Exception as e:
-        print(f"❌ Speech recognition error: {e}")
-    return None
+        except sr.UnknownValueError:
+            print("❌ Didn't catch that.")
+        except sr.RequestError:
+            print("❌ API error.")
+        return None
 
-# Initialize LLM
-try:
-    template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
-    model = OllamaLLM(model="llama3")
-    prompt = ChatPromptTemplate.from_template(template)
-    chain = prompt | model
-except Exception as e:
-    print(f"Warning: LLM initialization failed: {e}")
-    chain = None
+template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
+model = OllamaLLM(model="llama3")
+prompt = ChatPromptTemplate.from_template(template)
+chain = prompt | model
 
-# Direction mapping
 directions = {
     "forward": ["go forward", "move forward", "move ahead", "advance"],
     "backward": ["go backward", "move backward", "reverse"],
@@ -515,7 +498,6 @@ directions = {
     "moveLeft": ["move left", "strafe left"],
     "moveRight": ["move right", "strafe right"],
 }
-
 time_patterns = {
     "seconds": r"(\d+)\s*seconds?",
     "minutes": r"(\d+)\s*minutes?",
@@ -537,17 +519,12 @@ def convert_to_milliseconds(text):
     return None
 
 def keyboard_control_continuous():
-    """Continuous keyboard control with proper error handling"""
     global keyboard_mode_active, exit_keyboard_mode
     print("🎮 Continuous keyboard mode activated!")
     print("Controls: ↑=Forward, ↓=Backward, ←=Turn Left, →=Turn Right")
     print("          A=Strafe Left, D=Strafe Right, SPACE=Stop, E=Exit")
-    
-    last_key_state = {"up": False, "down": False, "left": False, "right": False, 
-                      "a": False, "d": False, "space": False}
-    key_commands = {"up": "forward", "down": "backward", "left": "left", 
-                   "right": "right", "a": "moveleft", "d": "moveright"}
-    
+    last_key_state = {"up": False, "down": False, "left": False, "right": False, "a": False, "d": False, "space": False}
+    key_commands = {"up": "forward", "down": "backward", "left": "left", "right": "right", "a": "moveleft", "d": "moveright"}
     while keyboard_mode_active and not exit_keyboard_mode:
         try:
             if keyboard.is_pressed("e"):
@@ -555,18 +532,7 @@ def keyboard_control_continuous():
                 processImmediateCommand("stop")
                 exit_keyboard_mode = True
                 break
-                
-            current_key_states = {
-                "up": keyboard.is_pressed("up"),
-                "down": keyboard.is_pressed("down"),
-                "left": keyboard.is_pressed("left"),
-                "right": keyboard.is_pressed("right"),
-                "a": keyboard.is_pressed("a"),
-                "d": keyboard.is_pressed("d"),
-                "space": keyboard.is_pressed("space")
-            }
-            
-            # Handle key presses
+            current_key_states = {"up": keyboard.is_pressed("up"), "down": keyboard.is_pressed("down"), "left": keyboard.is_pressed("left"), "right": keyboard.is_pressed("right"), "a": keyboard.is_pressed("a"), "d": "moveright"}
             for key, is_pressed in current_key_states.items():
                 if is_pressed and not last_key_state[key]:
                     if key == "space":
@@ -576,141 +542,83 @@ def keyboard_control_continuous():
                         command = key_commands[key]
                         processImmediateCommand(command)
                         print(f"▶️ {key.upper()} pressed → {command}")
-            
-            # Handle key releases
             for key, is_pressed in current_key_states.items():
                 if not is_pressed and last_key_state[key] and key != "space":
                     processImmediateCommand("stop")
                     print(f"⏹️ {key.upper()} released → stop")
-            
             last_key_state = current_key_states.copy()
             time.sleep(0.02)
-            
         except Exception as e:
             print(f"⚠️ Keyboard control error: {e}")
             time.sleep(0.1)
 
 async def handle_conversation():
-    """Main conversation handler with improved error handling"""
     global keyboard_mode_active, exit_keyboard_mode
     context = ""
     print("Welcome to the AI Chatbot! Type 'exit' to quit.")
-    
     while True:
-        try:
-            mode = input("Use (s)peech, (t)ype or (k)eyboard? ").strip().lower()
-            
-            if mode == 's':
-                while True:
-                    user_input = listen()
-                    if not user_input:
-                        continue
-                    if user_input.lower() == "exit":
-                        return
-                        
-                    if await process_user_input(user_input, context):
-                        context += f"\nUser: {user_input}\nAI: [Movement Command]"
-                    else:
-                        if chain:
-                            try:
-                                result = chain.invoke({"context": context, "question": user_input})
-                                print("Bot:", result)
-                                speak(str(result))
-                                context += f"\nUser: {user_input}\nAI: {result}"
-                            except Exception as e:
-                                print(f"LLM error: {e}")
-                                response = "I'm having trouble processing that request."
-                                print("Bot:", response)
-                                speak(response)
-                        else:
-                            response = "LLM not available. Please use movement commands."
-                            print("Bot:", response)
-                            speak(response)
-                    
-                    continue_mode = input("Continue speech mode? (y/n): ").strip().lower()
-                    if continue_mode == 'n':
-                        break
-                        
-            elif mode == 't':
-                while True:
-                    user_input = input("You: ")
-                    if user_input.lower() == "exit":
-                        return
-                        
-                    if await process_user_input(user_input, context):
-                        context += f"\nUser: {user_input}\nAI: [Movement Command]"
-                    else:
-                        if chain:
-                            try:
-                                result = chain.invoke({"context": context, "question": user_input})
-                                print("Bot:", result)
-                                speak(str(result))
-                                context += f"\nUser: {user_input}\nAI: {result}"
-                            except Exception as e:
-                                print(f"LLM error: {e}")
-                                response = "I'm having trouble processing that request."
-                                print("Bot:", response)
-                        else:
-                            response = "LLM not available. Please use movement commands."
-                            print("Bot:", response)
-                    
-                    continue_mode = input("Continue text mode? (y/n): ").strip().lower()
-                    if continue_mode == 'n':
-                        break
-                        
-            elif mode == 'k':
-                keyboard_mode_active = True
-                exit_keyboard_mode = False
-                keyboard_thread = threading.Thread(target=keyboard_control_continuous, daemon=True)
-                keyboard_thread.start()
-                
-                while keyboard_mode_active and not exit_keyboard_mode:
-                    await asyncio.sleep(0.1)
-                    
-                keyboard_mode_active = False
-                print("🔄 Returning to mode selection...")
-                
-            else:
-                print("❌ Invalid mode. Please choose 's', 't', or 'k'.")
-                continue
-                
-        except KeyboardInterrupt:
-            print("\n👋 Shutting down...")
-            return
-        except Exception as e:
-            print(f"Error in conversation handler: {e}")
+        mode = input("Use (s)peech, (t)ype or (k)eyboard? ").strip().lower()
+        if mode == 's':
+            while True:
+                user_input = listen()
+                if not user_input:
+                    continue
+                if user_input.lower() == "exit":
+                    return
+                if await process_user_input(user_input, context):
+                    context += f"\nUser: {user_input}\nAI: [Movement Command]"
+                else:
+                    result = chain.invoke({"context": context, "question": user_input})
+                    print("Bot:", result)
+                    speak(str(result))
+                    context += f"\nUser: {user_input}\nAI: {result}"
+                continue_mode = input("Continue speech mode? (y/n): ").strip().lower()
+                if continue_mode == 'n':
+                    break
+        elif mode == 't':
+            while True:
+                user_input = input("You: ")
+                if user_input.lower() == "exit":
+                    return
+                if await process_user_input(user_input, context):
+                    context += f"\nUser: {user_input}\nAI: [Movement Command]"
+                else:
+                    result = chain.invoke({"context": context, "question": user_input})
+                    print("Bot:", result)
+                    speak(str(result))
+                    context += f"\nUser: {user_input}\nAI: {result}"
+                continue_mode = input("Continue text mode? (y/n): ").strip().lower()
+                if continue_mode == 'n':
+                    break
+        elif mode == 'k':
+            keyboard_mode_active = True
+            exit_keyboard_mode = False
+            keyboard_thread = threading.Thread(target=keyboard_control_continuous, daemon=True)
+            keyboard_thread.start()
+            while keyboard_mode_active and not exit_keyboard_mode:
+                await asyncio.sleep(0.1)
+            keyboard_mode_active = False
+            print("🔄 Returning to mode selection...")
+        else:
+            print("❌ Invalid mode. Please choose 's', 't', or 'k'.")
             continue
 
 async def main():
-    """Main function with proper cleanup"""
     global main_loop
     main_loop = asyncio.get_running_loop()
-    
     try:
         await handle_conversation()
     except KeyboardInterrupt:
         print("\n👋 Shutting down...")
-    except Exception as e:
-        print(f"Main error: {e}")
     finally:
-        print("Cleaning up...")
-        try:
-            Motor1_pwm.stop()
-            Motor2_pwm.stop()
-            Motor3_pwm.stop()
-            GPIO.cleanup()
-        except Exception as e:
-            print(f"Cleanup error: {e}")
+        print("Cleaning up GPIO...")
+        Motor1_pwm.stop()
+        Motor2_pwm.stop()
+        Motor3_pwm.stop()
+        GPIO.cleanup()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")
-    except Exception as e:
-        print(f"Program error: {e}")
-        # Ensure GPIO cleanup even on error
-        try:
-            GPIO.cleanup()
-        except:
-            pass
