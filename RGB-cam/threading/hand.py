@@ -145,29 +145,29 @@ def main():
             elif is_shaking_hands(lmList):
                 print("shaking hands")
 
-  def process_hand_frame(frame, history: deque, detector):
-        """
-        Process one BGR image frame for hand gestures.
-    
-        Args:
-          frame      (np.ndarray): the raw BGR image from cv2.VideoCapture.read()
-          history    (deque): deque(maxlen=N) storing recent index-finger x-positions
-          detector   (handDetector): your initialized Mediapipe hand detector
-    
-        Returns:
-          None (prints “🤚 Waving” or “🤝 Shaking Hands” when detected)
-        """
-        # 1) Mirror the image so movements feel natural
-        img = cv2.flip(frame, 1)
-    
-        # 2) Run hand detection (no drawing on the image itself)
-        img = detector.findHands(img, draw=False)
-        lmList = detector.findPosition(img, draw=False)
-    
-        # 3) If a hand is found, decide which gesture it matches
-        if lmList:
-            if is_waving(lmList, detector, history):
-                print("🤚 Waving")
-            elif is_shaking_hands(lmList):
-                print("🤝 Shaking Hands")          
+def process_hand_frame(frame, history: deque, detector):
+    """
+    Process one BGR image frame for hand gestures.
+
+    Args:
+      frame      (np.ndarray): the raw BGR image from cv2.VideoCapture.read()
+      history    (deque): deque(maxlen=N) storing recent index-finger x-positions
+      detector   (handDetector): your initialized Mediapipe hand detector
+
+    Returns:
+      None (prints “🤚 Waving” or “🤝 Shaking Hands” when detected)
+    """
+    # 1) Mirror the image so movements feel natural
+    img = cv2.flip(frame, 1)
+
+    # 2) Run hand detection (no drawing on the image itself)
+    img = detector.findHands(img, draw=False)
+    lmList = detector.findPosition(img, draw=False)
+
+    # 3) If a hand is found, decide which gesture it matches
+    if lmList:
+        if is_waving(lmList, detector, history):
+            print("🤚 Waving")
+        elif is_shaking_hands(lmList):
+            print("🤝 Shaking Hands")          
             
