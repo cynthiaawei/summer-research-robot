@@ -3,16 +3,16 @@ import cv2
 import face_recognition
 import numpy as np
 
-def take_picture(name):
-    # loading the image path into file_name variable - replace <INSERT YOUR IMAGE NAME HERE> with the path to your image
-    camera = cv2.VideoCapture(0)
-    success, image = camera.read() # returns 2 values
+def take_picture(name, camera):
+    success, image = camera.read()
 
     if success:
         path = os.path.join('/home/robot/summer-research-robot/RGB-cam/images', name + '.jpg')
         cv2.imwrite(path, image)
         if not os.path.exists(path):
             print(f"❌ Failed to save image to {path}")
+    else:
+        print("❌ Failed to capture image from camera")
 
 path = '/home/robot/summer-research-robot/RGB-cam/images'
 images = []
@@ -66,7 +66,7 @@ while True:
 
             if(unknown_num > 3): # check three times that its unknown just to be sure
                 name = input("Welcome new visitor! What is your name? : ")
-                take_picture(name) # enter your name
+                take_picture(name, cap) # enter your name
 
                 unknown_num = 0 # reset unknown count to 0
                 new_img = cv2.imread(f'{path}/{name}.jpg') # update list
