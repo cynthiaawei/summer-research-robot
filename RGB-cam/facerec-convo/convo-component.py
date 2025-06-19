@@ -10,7 +10,7 @@ from bleak import BleakClient, BleakScanner
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 import sys
-import facerec-component as FR
+import facerec_component as FR
 
 CHARACTERISTIC_UUID = "19B10011-E8F2-537E-4F6C-D104768A1214"
 ble_client = None
