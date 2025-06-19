@@ -5,14 +5,14 @@ from collections import deque
 import hand, face, face_helper
 
 def hand_thread(cap):
-    detector = hand.handDetector()
+    detector = hand.handDetector() # what was outside of the main while loop in the main function
     history  = deque(maxlen=10)
     while True:
-        success, frame = cap.read()
+        success, frame = cap.read() # read again
         if not success:
             time.sleep(0.03)
             continue
-        hand.process_hand_frame(frame, history, detector)
+        hand.process_hand_frame(frame, history, detector) # only include the infinite loop inside the main function
         time.sleep(0.03)
 
 def face_thread(cap):
