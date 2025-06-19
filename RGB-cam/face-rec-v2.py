@@ -60,7 +60,7 @@ while True:
         best_match_distance = faceDis[matchIndex]
         print(best_match_distance)
         
-        if(best_match_distance > 0.43): # unknown face
+        if(best_match_distance > 0.38): # unknown face
             print("UNKNOWN")
             unknown_num += 1 
 
