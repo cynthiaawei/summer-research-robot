@@ -103,7 +103,7 @@ def findEncodings(images):
 encodeListKnown = findEncodings(images)
 
 # turn on camera
-cap = cv2.VideoCapture(0)
+#cap = cv2.VideoCapture(0)
 
 
 # find matches
