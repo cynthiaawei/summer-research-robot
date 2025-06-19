@@ -144,5 +144,18 @@ def main():
                 print("waving")
             elif is_shaking_hands(lmList):
                 print("shaking hands")
-            
+                
+def process_hand_frame(frame, history, detector):
+    """
+    Given a BGR frame, a history deque, and a handDetector,
+    prints “Waving” or “Shaking Hands” if it sees them.
+    """
+    img = cv2.flip(frame, 1)
+    detector.findHands(img, draw=False)
+    lmList = detector.findPosition(img, draw=False)
+    if lmList:
+        if is_waving(lmList, detector, history):
+            print("🤚 Waving")
+        elif is_shaking_hands(lmList):
+            print("🤝 Shaking Hands")
             
