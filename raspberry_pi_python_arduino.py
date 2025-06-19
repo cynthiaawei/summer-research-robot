@@ -334,7 +334,6 @@ def moveLeft(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter:
-            print("Move left interrupted by new command")
             break
         if interruptHandler():
             break
