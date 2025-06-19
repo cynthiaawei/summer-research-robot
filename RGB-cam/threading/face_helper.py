@@ -140,7 +140,7 @@ def findMatch(mode):
                     elif mode == "s": 
                         speak(str("Welcome new visitor! What is your name?"))
                         name = listen()
-                    take_picture(name) # enter your name
+                    take_picture(name, cap) # enter your name
 
                     unknown_num = 0 # reset unknown count to 0
                     new_img = cv2.imread(f'{path}/{name}.jpg') # update list
