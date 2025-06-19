@@ -69,16 +69,18 @@ def listen():
             print("❌ API error.")
         return None
     
-def take_picture(name):
-    # loading the image path into file_name variable - replace <INSERT YOUR IMAGE NAME HERE> with the path to your image
-    camera = cv2.VideoCapture(0)
-    success, image = camera.read() # returns 2 values
+def take_picture(name, camera):
+    success, image = camera.read()
 
     if success:
-        path = os.path.join('/Users/cynthia/face-recognition/images', name + '.jpg')
+        path = os.path.join('/home/robot/summer-research-robot/RGB-cam/images', name + '.jpg')
         cv2.imwrite(path, image)
+        if not os.path.exists(path):
+            print(f"❌ Failed to save image to {path}")
+    else:
+        print("❌ Failed to capture image from camera")
 
-path = '/Users/cynthia/face-recognition/images'
+path = '/home/robot/summer-research-robot/RGB-cam/images'
 images = []
 classNames = []
 myList = os.listdir(path)
