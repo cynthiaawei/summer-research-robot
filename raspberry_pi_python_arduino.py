@@ -494,10 +494,12 @@ async def process_user_input(user_input, context):
     long_instruction = ""
     contain_instructions = False
     instructions = [instr.strip() for instr in user_input.split("then")]
+    
     for instruction in instructions:
         instr_lower = instruction.lower()
         direction = get_direction(instr_lower)
         time_in_ms = convert_to_milliseconds(instr_lower)
+        
         if 'turn left' in instr_lower:
             direction = 'turnLeft'
             time_in_ms = time_in_ms or 2000
@@ -510,12 +512,14 @@ async def process_user_input(user_input, context):
         elif 'move right' in instr_lower or 'strafe right' in instr_lower:
             direction = 'moveRight'
             time_in_ms = time_in_ms or 2000
+        
         if direction and (time_in_ms is not None):
             long_instruction += f"{direction} {time_in_ms} "
             contain_instructions = True
         elif direction == "stop":
             long_instruction += "stop -1"
             contain_instructions = True
+    
     if contain_instructions:
         print("Bot:", long_instruction.strip())
         words = long_instruction.strip().split()
@@ -524,9 +528,11 @@ async def process_user_input(user_input, context):
                 command = words[i]
                 duration = int(words[i + 1])
                 global commandCharacter
-                commandCharacter = command
+                print(f"Executing: {command} for {duration}ms")
+                commandCharacter = command  # Set for the current command
                 processCommand(command, duration)
-                commandCharacter = ""
+                commandCharacter = ""  # Clear after completion
+                await asyncio.sleep(duration / 1000)  # Wait for the command to finish
         return True
     return False
 
