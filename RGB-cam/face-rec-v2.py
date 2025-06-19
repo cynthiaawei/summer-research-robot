@@ -11,6 +11,8 @@ def take_picture(name):
     if success:
         path = os.path.join('/home/robot/summer-research-robot/RGB-cam/images', name + '.jpg')
         cv2.imwrite(path, image)
+        if not os.path.exists(path):
+            print(f"❌ Failed to save image to {path}")
 
 path = '/home/robot/summer-research-robot/RGB-cam/images'
 images = []
