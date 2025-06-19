@@ -145,7 +145,7 @@ def main():
             elif is_shaking_hands(lmList):
                 print("shaking hands")
                 
-def process_hand_frame(frame, history, detector):
+def process_hand_frame(frame, history, detector): #  only the while loop inside of main
     """
     Given a BGR frame, a history deque, and a handDetector,
     prints “Waving” or “Shaking Hands” if it sees them.
@@ -155,7 +155,7 @@ def process_hand_frame(frame, history, detector):
     lmList = detector.findPosition(img, draw=False)
     if lmList:
         if is_waving(lmList, detector, history):
-            print("🤚 Waving")
+            print("Waving")
         elif is_shaking_hands(lmList):
-            print("🤝 Shaking Hands")
+            print("Shaking Hands")
             
