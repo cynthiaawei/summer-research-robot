@@ -3,7 +3,7 @@ import time
 
 MOTOR_PIN = 18    # BCM numbering
 
-GPIO.setmode(GPIO.BCM)
+GPIO.setmode(GPIO.BOARD)
 GPIO.setup(MOTOR_PIN, GPIO.OUT)
 
 pwm = GPIO.PWM(MOTOR_PIN, 1000)               # 1 kHz PWM
