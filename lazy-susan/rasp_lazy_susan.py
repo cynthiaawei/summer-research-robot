@@ -10,4 +10,5 @@ pwm = GPIO.PWM(MOTOR_PIN, 1000)
 pwm.start(100)   # 100% duty = pin held HIGH
 time.sleep(1)
 pwm.stop()
+del pwm
 GPIO.cleanup()
