@@ -1,22 +1,25 @@
 import RPi.GPIO as GPIO
-from time import sleep
+import time
 
-LS_PIN = 18  # Board pin number
+# adjust this to the GPIO pin you're using
+MOTOR_PIN = 18    # BCM numbering
 
-def main():
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(LS_PIN, GPIO.OUT)
+# --- setup ---
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(MOTOR_PIN, GPIO.OUT)
 
-    pwm = GPIO.PWM(LS_PIN, 1000)  # 1 kHz PWM
-    pwm.start(39.2)               # ≈ analogWrite(pin,100)
-    sleep(0.5)                    # run 0.5 s
-    pwm.stop()                    # stop PWM
+# create a 1 kHz PWM instance on MOTOR_PIN
+pwm = GPIO.PWM(MOTOR_PIN, 1000)
 
-    # delete it now so its __del__ runs here, while
-    # GPIO is still active and the stop() call succeeds
-    del pwm
+# start at ≈39% duty (100/255×100)
+pwm.start((100/255) * 100)
 
-    GPIO.cleanup()
+# run motor for 0.5 s
+time.sleep(0.5)
 
-if __name__ == "__main__":
-    main()
+# stop motor
+pwm.ChangeDutyCycle(0)
+pwm.stop()
+
+# cleanup GPIO state
+GPIO.cleanup()
