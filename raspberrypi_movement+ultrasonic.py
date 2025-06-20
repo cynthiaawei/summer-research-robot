@@ -1694,5 +1694,25 @@ async def handle_conversation():
         
         else:
             print("❌ Invalid choice. Please select 's', 't', 'k', or 'q'.")
+async def main():
+    global obstacle_detection_thread
+    try:
+        obstacle_detection_thread = threading.Thread(target=obstacle_detection_loop, daemon=True)
+        obstacle_detection_thread.start()
+        await handle_conversation()
+    except (KeyboardInterrupt, SystemExit):
+        print("\n👋 User interrupted. Shutting down...")
+    finally:
+        print("Final cleanup: Stopping motors and releasing GPIO pins...")
+        immediateStop()
+        time.sleep(0.1)
+        GPIO.remove_event_detect(Echo1)
+        GPIO.remove_event_detect(Echo2)
+        GPIO.remove_event_detect(Echo3)
+        Motor1_pwm.stop()
+        Motor2_pwm.stop()
+        Motor3_pwm.stop()
+        GPIO.cleanup()
+        print("✅ Cleanup complete. Goodbye!")
 if __name__ == "__main__":
     asyncio.run(main())
