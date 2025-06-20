@@ -1,10 +1,10 @@
 import RPi.GPIO as GPIO
 from time import sleep
 
-LS_PIN = 18  # BCM pin number
+LS_PIN = 18  # Board pin number
 
 def main():
-    GPIO.setmode(GPIO.BCM)
+    GPIO.setmode(GPIO.BOARD)
     GPIO.setup(LS_PIN, GPIO.OUT)
 
     pwm = GPIO.PWM(LS_PIN, 1000)  # 1 kHz PWM
