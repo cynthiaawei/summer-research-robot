@@ -1,7 +1,7 @@
 import RPi.GPIO as GPIO
 from time import sleep
 
-LS_PIN = 24  # BCM pin number
+LS_PIN = 18  # BCM pin number
 
 def main():
     GPIO.setmode(GPIO.BCM)
