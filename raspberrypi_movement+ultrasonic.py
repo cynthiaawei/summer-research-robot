@@ -117,9 +117,7 @@ def get_distance(trig_pin, echo_pin, timeout=0.5):
         return -1
 
 def obstacle_detection_loop():
-    global obstacle_detection_active
-    global obstacle_detected
-    global return_to_mode_selection
+    global obstacle_detection_active, obstacle_detected, return_to_mode_selection
     while True:
         if obstacle_detection_active and not obstacle_detected:
             try:
@@ -135,7 +133,6 @@ def obstacle_detection_loop():
                             obstacle_detected = True
                             return_to_mode_selection = True
                             emergency_stop()
-                            # Removed break to keep thread running
                 time.sleep(0.02)
             except Exception:
                 time.sleep(0.1)
@@ -143,8 +140,8 @@ def obstacle_detection_loop():
             time.sleep(0.1)
 
 def emergency_stop():
-    global return_to_mode_selection
-    global obstacle_detected
+    global return_to_mode_selection, obstacle_detected
+    print("Stopped due to obstacle detected")
     with movement_lock:
         Motor1_pwm.ChangeDutyCycle(0)
         Motor2_pwm.ChangeDutyCycle(0)
@@ -154,11 +151,10 @@ def emergency_stop():
         gCurSpeed2 = 0
         gCurSpeed3 = 0
         stop_obstacle_detection()
-        obstacle_detected = False  # Reset obstacle_detected
+        obstacle_detected = False
 
 def start_obstacle_detection():
-    global obstacle_detection_active
-    global obstacle_detected
+    global obstacle_detection_active, obstacle_detected
     obstacle_detection_active = True
     obstacle_detected = False
 
@@ -166,16 +162,8 @@ def stop_obstacle_detection():
     global obstacle_detection_active
     obstacle_detection_active = False
 
-def is_robot_moving():
-    return gCurSpeed1 > 0 or gCurSpeed2 > 0 or gCurSpeed3 > 0
-
 def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, newSpeed3):
-    global interruptRequested
-    global gCurSpeed1
-    global gCurSpeed2
-    global gCurSpeed3
-    global obstacle_detected
-    global return_to_mode_selection
+    global interruptRequested, gCurSpeed1, gCurSpeed2, gCurSpeed3, obstacle_detected
     with movement_lock:
         if obstacle_detected:
             return
@@ -205,16 +193,12 @@ def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, new
             Motor3_pwm.ChangeDutyCycle(k)
             time.sleep(0.005)
         if not interruptRequested and not obstacle_detected:
-            gCurSpeed1 = newSpeed1
-            gCurSpeed2 = newSpeed2
-            gCurSpeed3 = newSpeed3
+            gCurSpeed1, gCurSpeed2, gCurSpeed3 = newSpeed1, newSpeed2, newSpeed3
         else:
             Motor1_pwm.ChangeDutyCycle(0)
             Motor2_pwm.ChangeDutyCycle(0)
             Motor3_pwm.ChangeDutyCycle(0)
-            gCurSpeed1 = 0
-            gCurSpeed2 = 0
-            gCurSpeed3 = 0
+            gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, 0, 0
         if newSpeed1 == 0 and newSpeed2 == 0 and newSpeed3 == 0:
             stop_obstacle_detection()
 
@@ -223,31 +207,27 @@ def stopNoTime():
         Motor1_pwm.ChangeDutyCycle(0)
         Motor2_pwm.ChangeDutyCycle(0)
         Motor3_pwm.ChangeDutyCycle(0)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = 0
-        gCurSpeed2 = 0
-        gCurSpeed3 = 0
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, 0, 0
         stop_obstacle_detection()
 
 def interruptHandler():
-    global triggered1
-    global triggered2
-    global triggered3
-    global return_to_mode_selection
+    global triggered1, triggered2, triggered3, return_to_mode_selection
     if triggered1:
         triggered1 = False
+        print("Interrupt from sensor 1!")
         return_to_mode_selection = True
         emergency_stop()
         return True
     if triggered2:
         triggered2 = False
+        print("Interrupt from sensor 2!")
         return_to_mode_selection = True
         emergency_stop()
         return True
     if triggered3:
         triggered3 = False
+        print("Interrupt from sensor 3!")
         return_to_mode_selection = True
         emergency_stop()
         return True
@@ -257,6 +237,7 @@ def startForward():
     global obstacle_detected
     if obstacle_detected:
         return
+    print("Starting forward movement")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -265,17 +246,14 @@ def startForward():
         Motor1_pwm.ChangeDutyCycle(0)
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = 0
-        gCurSpeed2 = gSliderSpeed
-        gCurSpeed3 = gSliderSpeed + motor3_compensate
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, gSliderSpeed, gSliderSpeed + motor3_compensate
 
 def startBackward():
     global obstacle_detected
     if obstacle_detected:
         return
+    print("Starting backward movement")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.LOW)
     GPIO.output(Motor3_Dir, GPIO.HIGH)
@@ -284,17 +262,14 @@ def startBackward():
         Motor1_pwm.ChangeDutyCycle(0)
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = 0
-        gCurSpeed2 = gSliderSpeed
-        gCurSpeed3 = gSliderSpeed + motor3_compensate
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, gSliderSpeed, gSliderSpeed + motor3_compensate
 
 def startTurnLeft():
     global obstacle_detected
     if obstacle_detected:
         return
+    print("Starting left turn")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.LOW)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -303,17 +278,14 @@ def startTurnLeft():
         Motor1_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = gSliderSpeed
-        gCurSpeed2 = gSliderSpeed
-        gCurSpeed3 = gSliderSpeed + motor3_compensate
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = gSliderSpeed, gSliderSpeed, gSliderSpeed + motor3_compensate
 
 def startTurnRight():
     global obstacle_detected
     if obstacle_detected:
         return
+    print("Starting right turn")
     GPIO.output(Motor1_Dir, GPIO.LOW)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.HIGH)
@@ -322,17 +294,14 @@ def startTurnRight():
         Motor1_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = gSliderSpeed
-        gCurSpeed2 = gSliderSpeed
-        gCurSpeed3 = gSliderSpeed + motor3_compensate
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = gSliderSpeed, gSliderSpeed, gSliderSpeed + motor3_compensate
 
 def startMoveLeft():
     global obstacle_detected
     if obstacle_detected:
         return
+    print("Starting left strafe")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -341,17 +310,14 @@ def startMoveLeft():
         Motor1_pwm.ChangeDutyCycle(int(gSliderSpeed * 1.5))
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = int(gSliderSpeed * 1.5)
-        gCurSpeed2 = gSliderSpeed
-        gCurSpeed3 = gSliderSpeed + motor3_compensate
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = int(gSliderSpeed * 1.5), gSliderSpeed, gSliderSpeed + motor3_compensate
 
 def startMoveRight():
     global obstacle_detected
     if obstacle_detected:
         return
+    print("Starting right strafe")
     GPIO.output(Motor1_Dir, GPIO.LOW)
     GPIO.output(Motor2_Dir, GPIO.LOW)
     GPIO.output(Motor3_Dir, GPIO.HIGH)
@@ -360,32 +326,24 @@ def startMoveRight():
         Motor1_pwm.ChangeDutyCycle(int(gSliderSpeed * 1.5))
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
-        global gCurSpeed1
-        global gCurSpeed2
-        global gCurSpeed3
-        gCurSpeed1 = int(gSliderSpeed * 1.5)
-        gCurSpeed2 = gSliderSpeed
-        gCurSpeed3 = gSliderSpeed + motor3_compensate
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1, gCurSpeed2, gCurSpeed3 = int(gSliderSpeed * 1.5), gSliderSpeed, gSliderSpeed + motor3_compensate
 
 def immediateStop():
-    global obstacle_detected
-    global return_to_mode_selection
+    global obstacle_detected, return_to_mode_selection
+    print("Immediate stop")
     obstacle_detected = False
     return_to_mode_selection = False
     stopNoTime()
 
 def goForwards(speed, time_ms):
-    global triggered1
-    global triggered2
-    global triggered3
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
-    triggered1 = False
-    triggered2 = False
-    triggered3 = False
+    global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected, return_to_mode_selection
+    triggered1 = triggered2 = triggered3 = False
     obstacle_detected = False
     return_to_mode_selection = False
+    if obstacle_detected:
+        return
+    print(f"Moving forward for {time_ms}ms")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -395,23 +353,20 @@ def goForwards(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter or return_to_mode_selection:
+            print("Movement interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
             break
         time.sleep(0.01)
 
 def goBackwards(speed, time_ms):
-    global triggered1
-    global triggered2
-    global triggered3
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
-    triggered1 = False
-    triggered2 = False
-    triggered3 = False
+    global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected, return_to_mode_selection
+    triggered1 = triggered2 = triggered3 = False
     obstacle_detected = False
     return_to_mode_selection = False
+    if obstacle_detected:
+        return
+    print(f"Moving backward for {time_ms}ms")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.LOW)
     GPIO.output(Motor3_Dir, GPIO.HIGH)
@@ -421,40 +376,36 @@ def goBackwards(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter or return_to_mode_selection:
+            print("Movement interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
             break
         time.sleep(0.01)
 
 def stopMotors(time_ms):
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
+    global interruptRequested, permStop, obstacle_detected, return_to_mode_selection
     obstacle_detected = False
     return_to_mode_selection = False
+    print("Stopping motors")
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, 0, gCurSpeed3, 0)
     if time_ms >= 0:
         start = time.time()
         while time.time() - start < time_ms / 1000:
             if commandCharacter or return_to_mode_selection:
+                print("Stop interrupted by new command")
                 break
             time.sleep(0.01)
     else:
-        global permStop
         permStop = True
 
 def turnRight(speed, time_ms):
-    global triggered1
-    global triggered2
-    global triggered3
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
-    triggered1 = False
-    triggered2 = False
-    triggered3 = False
+    global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected, return_to_mode_selection
+    triggered1 = triggered2 = triggered3 = False
     obstacle_detected = False
     return_to_mode_selection = False
+    if obstacle_detected:
+        return
+    print(f"Turning right for {time_ms}ms")
     GPIO.output(Motor1_Dir, GPIO.LOW)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.HIGH)
@@ -464,23 +415,20 @@ def turnRight(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter or return_to_mode_selection:
+            print("Turn right interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
             break
         time.sleep(0.01)
 
 def turnLeft(speed, time_ms):
-    global triggered1
-    global triggered2
-    global triggered3
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
-    triggered1 = False
-    triggered2 = False
-    triggered3 = False
+    global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected, return_to_mode_selection
+    triggered1 = triggered2 = triggered3 = False
     obstacle_detected = False
     return_to_mode_selection = False
+    if obstacle_detected:
+        return
+    print(f"Turning left for {time_ms}ms")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.LOW)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -490,23 +438,20 @@ def turnLeft(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter or return_to_mode_selection:
+            print("Turn left interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
             break
         time.sleep(0.01)
 
 def moveRight(speed, time_ms):
-    global triggered1
-    global triggered2
-    global triggered3
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
-    triggered1 = False
-    triggered2 = False
-    triggered3 = False
+    global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected, return_to_mode_selection
+    triggered1 = triggered2 = triggered3 = False
     obstacle_detected = False
     return_to_mode_selection = False
+    if obstacle_detected:
+        return
+    print(f"Moving right for {time_ms}ms")
     GPIO.output(Motor1_Dir, GPIO.LOW)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -516,23 +461,20 @@ def moveRight(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter or return_to_mode_selection:
+            print("Move right interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
             break
         time.sleep(0.01)
 
 def moveLeft(speed, time_ms):
-    global triggered1
-    global triggered2
-    global triggered3
-    global interruptRequested
-    global obstacle_detected
-    global return_to_mode_selection
-    triggered1 = False
-    triggered2 = False
-    triggered3 = False
+    global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected, return_to_mode_selection
+    triggered1 = triggered2 = triggered3 = False
     obstacle_detected = False
     return_to_mode_selection = False
+    if obstacle_detected:
+        return
+    print(f"Moving left for {time_ms}ms")
     GPIO.output(Motor1_Dir, GPIO.HIGH)
     GPIO.output(Motor2_Dir, GPIO.HIGH)
     GPIO.output(Motor3_Dir, GPIO.LOW)
@@ -542,6 +484,7 @@ def moveLeft(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter or return_to_mode_selection:
+            print("Move left interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
             break
@@ -582,6 +525,8 @@ def processCommand(command, time_ms):
         moveLeft(gSliderSpeed, time_ms)
     elif command == "stop":
         stopMotors(time_ms)
+    else:
+        print("Unknown timed command:", command)
 
 def speak(text):
     system = platform.system().lower()
@@ -675,34 +620,18 @@ def convert_to_milliseconds(text):
     return None
 
 def keyboard_control_continuous():
-    global keyboard_mode_active
-    global exit_keyboard_mode
-    global return_to_mode_selection
+    global keyboard_mode_active, exit_keyboard_mode, return_to_mode_selection
     print("🎮 Continuous keyboard mode activated!")
     print("Controls: ↑=Forward, ↓=Backward, ←=Turn Left, →=Turn Right")
     print("          A=Strafe Left, D=Strafe Right, SPACE=Stop, E=Exit")
-    last_key_state = {
-        "up": False,
-        "down": False,
-        "left": False,
-        "right": False,
-        "a": False,
-        "d": False,
-        "space": False
-    }
-    key_commands = {
-        "up": "forward",
-        "down": "backward",
-        "left": "left",
-        "right": "right",
-        "a": "moveleft",
-        "d": "moveright"
-    }
+    last_key_state = {"up": False, "down": False, "left": False, "right": False, "a": False, "d": False, "space": False}
+    key_commands = {"up": "forward", "down": "backward", "left": "left", "right": "right", "a": "moveleft", "d": "moveright"}
     while keyboard_mode_active and not exit_keyboard_mode:
         try:
             if keyboard.is_pressed("e"):
                 processImmediateCommand("stop")
                 exit_keyboard_mode = True
+                return_to_mode_selection = True
                 break
             if return_to_mode_selection:
                 processImmediateCommand("stop")
@@ -733,49 +662,55 @@ def keyboard_control_continuous():
             time.sleep(0.1)
 
 async def process_user_input(user_input, context):
-    global return_to_mode_selection
-    global obstacle_detected
+    global return_to_mode_selection, obstacle_detected
     if not user_input:
         return False
     instructions = [instr.strip() for instr in user_input.split("then")]
-    command_sequence = []
-    has_movement = False
-    obstacle_detected = False  # Reset before processing
+    long_instruction = ""
+    contain_instructions = False
+    obstacle_detected = False
+    return_to_mode_selection = False
     for instruction in instructions:
-        direction = get_direction(instruction)
-        time_ms = convert_to_milliseconds(instruction)
-        if direction in ["turnLeft", "turnRight"] and time_ms is None:
-            time_ms = 1500
-        if direction and time_ms is not None:
-            command_sequence.append((direction, time_ms))
-            has_movement = True
+        instr_lower = instruction.lower()
+        direction = get_direction(instr_lower)
+        time_in_ms = convert_to_milliseconds(instr_lower)
+        if direction in ["turnLeft", "turnRight", "moveLeft", "moveRight"] and time_in_ms is None:
+            time_in_ms = 2000
+        if direction and time_in_ms is not None:
+            long_instruction += f"{direction} {time_in_ms} "
+            contain_instructions = True
         elif direction == "stop":
-            command_sequence.append(("stop", 0))
-            has_movement = True
-    if has_movement:
-        for command, duration in command_sequence:
-            global commandCharacter
-            commandCharacter = command
-            processCommand(command, duration)
-            commandCharacter = ""
-            if permStop or obstacle_detected or return_to_mode_selection:
-                break
-            await asyncio.sleep(duration / 1000)
-        return_to_mode_selection = False
+            long_instruction += "stop -1 "
+            contain_instructions = True
+    if contain_instructions:
+        print("Bot:", long_instruction.strip())
+        words = long_instruction.strip().split()
+        with movement_lock:
+            for i in range(0, len(words), 2):
+                if i + 1 < len(words):
+                    command = words[i]
+                    duration = int(words[i + 1])
+                    global commandCharacter
+                    print(f"Executing: {command} for {duration}ms")
+                    commandCharacter = command
+                    processCommand(command, duration)
+                    commandCharacter = ""
+                    if permStop or obstacle_detected or return_to_mode_selection:
+                        if obstacle_detected:
+                            emergency_stop()
+                        break
+                    await asyncio.sleep(duration / 1000 if duration >= 0 else 0)
         return True
     return False
 
 async def handle_conversation():
-    global keyboard_mode_active
-    global exit_keyboard_mode
-    global return_to_mode_selection
-    global obstacle_detected
+    global keyboard_mode_active, exit_keyboard_mode, return_to_mode_selection, obstacle_detected
     context = ""
     print("="*50 + "\n🤖 AI Omni-Wheel Robot Assistant Initialized 🤖\n" + "="*50)
     while True:
         if return_to_mode_selection:
             return_to_mode_selection = False
-            obstacle_detected = False  # Reset before mode selection
+            obstacle_detected = False
         mode = input("\nChoose mode: (s)peech, (t)ype, (k)eyboard, or (q)uit? ").strip().lower()
         if mode in ['s', 'speech']:
             while True:
@@ -859,4 +794,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
