@@ -1,16 +1,17 @@
-from gpiozero import PWMOutputDevice
+import RPi.GPIO as GPIO
 from time import sleep
 
-# Use a pin that supports PWMOutputDevice (software PWM) — 
-# e.g. BCM 18. Change to your wiring.
-MOTOR_PIN = 18  
+MOTOR_PIN = 24  # BCM pin number
 
-def run_motor():
-    motor = PWMOutputDevice(MOTOR_PIN, frequency=1000)  # 1 kHz PWM
-    motor.value = 100/255    # Map Arduino’s 0–255 range to 0.0–1.0
-    sleep(0.5)               # 500 ms on
-    motor.value = 0          # stop
-    motor.close()
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(MOTOR_PIN, GPIO.OUT)
 
-if __name__ == "__main__":
-    run_motor()
+# 1 kHz PWM
+pwm = GPIO.PWM(MOTOR_PIN, 1000)
+# duty-cycle = (100/255)*100 ≈ 39%
+pwm.start(39.2)
+
+sleep(0.5)   # motor on for 0.5 s
+pwm.stop()
+
+GPIO.cleanup()
