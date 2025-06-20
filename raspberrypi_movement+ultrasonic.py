@@ -162,7 +162,7 @@ def stop_obstacle_detection():
     global obstacle_detection_active
     obstacle_detection_active = False
 
-# === Movement Functions (from reference code) ===
+# === Movement Functions (from older reference code) ===
 def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, newSpeed3):
     global interruptRequested, gCurSpeed1, gCurSpeed2, gCurSpeed3, obstacle_detected
     with movement_lock:
@@ -621,21 +621,21 @@ async def process_user_input(user_input, context):
         with movement_lock:
             for command, duration in command_sequence:
                 commandCharacter = command
-                processCommand(command, duration)
+                processCommand(command, duration
                 commandCharacter = ""
                 await asyncio.sleep(duration / 1000)
         return True
     return False
 
 async def handle_conversation():
-    global keyboard_mode_active, exit_keyboard_mode, return_to_mode_selection, obstacle_detected
+    global keyboard_mode_active, exit_keyboard_mode_active, return_to_mode_selection, obstacle_detected
     context = ""
     print("="*50 + "\n🤖 AI Omni-Wheel Robot Assistant Initialized 🤖\n" + "="*50)
     while True:
         if return_to_mode_selection:
             return_to_mode_selection = False
             obstacle_detected = False
-        mode = input("\nChoose mode: (s)peech, (t)ype, (k)eyboard, or (q)uit? ").strip().lower()
+        mode = input("\nChoose mode: (s)peech, (t)ype, (k)yboard, or (q)uit? ").strip().lower()
         if mode in ['s', 'speech']:
             while True:
                 user_input = listen()
