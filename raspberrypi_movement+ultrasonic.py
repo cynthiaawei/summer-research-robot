@@ -82,6 +82,8 @@ spd_list = [Motor1_Speed, Motor2_Speed, Motor3_Speed]
 dir_list = [Motor1_Dir, Motor2_Dir, Motor3_Dir]
 commandCharacter = ""
 movement_lock = threading.Lock()
+keyboard_mode_active = False
+exit_keyboard_mode = False
 
 # === Obstacle Detection Variables ===
 obstacle_detection_active = False
@@ -89,9 +91,9 @@ obstacle_detected = False
 obstacle_detection_thread = None
 OBSTACLE_THRESHOLD = 30.0  # 30 cm threshold
 
-def get_distance(trig_pin, echo_pin, timeout=0.1):
+def get_distance(trig_pin, echo_pin, timeout=0.5):
     """
-    Get distance from ultrasonic sensor with timeout protection
+    Get distance from ultrasonic sensor with improved timeout and error handling
     Returns -1 if measurement fails
     """
     try:
@@ -127,9 +129,14 @@ def get_distance(trig_pin, echo_pin, timeout=0.1):
         distance = pulse_duration * 17150  # Speed of sound / 2
         distance = round(distance, 2)
         
+        # Validate reasonable distance range
+        if distance < 2 or distance > 400:
+            return -1
+            
         return distance
         
     except Exception as e:
+        print(f"Distance measurement error: {e}")
         return -1
 
 def obstacle_detection_loop():
@@ -139,31 +146,54 @@ def obstacle_detection_loop():
     """
     global obstacle_detection_active, obstacle_detected
     
+    print("🛡️ Obstacle detection thread started")
+    
     while True:
-        if obstacle_detection_active:
+        if obstacle_detection_active and not obstacle_detected:
             try:
-                # Measure distance for each sensor
-                dist1 = get_distance(Trig1, Echo1)
-                dist2 = get_distance(Trig2, Echo2)
-                dist3 = get_distance(Trig3, Echo3)
-                
-                # Check if any sensor detects obstacle within threshold
-                distances = [dist1, dist2, dist3]
-                valid_distances = [d for d in distances if d > 0]
-                
-                if valid_distances:
-                    min_distance = min(valid_distances)
-                    if min_distance < OBSTACLE_THRESHOLD:
-                        print(f"🚨 OBSTACLE DETECTED! Distance: {min_distance}cm")
-                        obstacle_detected = True
-                        stopNoTime()  # Emergency stop
-                        
-                time.sleep(0.05)  # Check every 50ms when active
+                # Only check if robot is actually moving
+                if gCurSpeed1 > 0 or gCurSpeed2 > 0 or gCurSpeed3 > 0:
+                    # Measure distance for each sensor
+                    dist1 = get_distance(Trig1, Echo1)
+                    dist2 = get_distance(Trig2, Echo2)
+                    dist3 = get_distance(Trig3, Echo3)
+                    
+                    # Check if any sensor detects obstacle within threshold
+                    distances = [dist1, dist2, dist3]
+                    valid_distances = [d for d in distances if d > 0]
+                    
+                    if valid_distances:
+                        min_distance = min(valid_distances)
+                        if min_distance < OBSTACLE_THRESHOLD:
+                            print(f"🚨 OBSTACLE DETECTED! Distance: {min_distance:.1f}cm - EMERGENCY STOP!")
+                            obstacle_detected = True
+                            emergency_stop()
+                            break  # Exit the detection loop
+                            
+                time.sleep(0.02)  # Check every 20ms when active (faster detection)
             except Exception as e:
                 print(f"Obstacle detection error: {e}")
                 time.sleep(0.1)
         else:
             time.sleep(0.1)  # Slower polling when inactive
+
+def emergency_stop():
+    """Emergency stop that immediately halts all motors"""
+    print("🚨 EMERGENCY STOP ACTIVATED!")
+    with movement_lock:
+        # Immediately stop all PWM
+        Motor1_pwm.ChangeDutyCycle(0)
+        Motor2_pwm.ChangeDutyCycle(0)
+        Motor3_pwm.ChangeDutyCycle(0)
+        
+        # Update global speeds
+        global gCurSpeed1, gCurSpeed2, gCurSpeed3
+        gCurSpeed1 = 0
+        gCurSpeed2 = 0
+        gCurSpeed3 = 0
+        
+        # Deactivate obstacle detection
+        stop_obstacle_detection()
 
 def start_obstacle_detection():
     """Start obstacle detection monitoring"""
@@ -186,6 +216,11 @@ def is_robot_moving():
 def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, newSpeed3):
     global interruptRequested, gCurSpeed1, gCurSpeed2, gCurSpeed3, obstacle_detected
     with movement_lock:
+        # Check for obstacle before starting movement
+        if obstacle_detected:
+            print("Movement blocked - obstacle detected!")
+            return
+            
         i = curSpeed1
         j = curSpeed2
         k = curSpeed3
@@ -216,7 +251,17 @@ def changeSpeedSmooth(curSpeed1, newSpeed1, curSpeed2, newSpeed2, curSpeed3, new
             time.sleep(0.005)
             
         if not interruptRequested and not obstacle_detected:
-            gCurSpeed1, gCurSpeed2, gCurSpeed3 = newSpeed1, newSpeed2, newSpeed3
+            gCurSpeed1 = newSpeed1
+            gCurSpeed2 = newSpeed2
+            gCurSpeed3 = newSpeed3
+        else:
+            # If interrupted or obstacle detected, ensure motors are stopped
+            Motor1_pwm.ChangeDutyCycle(0)
+            Motor2_pwm.ChangeDutyCycle(0)
+            Motor3_pwm.ChangeDutyCycle(0)
+            gCurSpeed1 = 0
+            gCurSpeed2 = 0
+            gCurSpeed3 = 0
             
         # Stop obstacle detection if not moving
         if newSpeed1 == 0 and newSpeed2 == 0 and newSpeed3 == 0:
@@ -228,7 +273,9 @@ def stopNoTime():
         Motor2_pwm.ChangeDutyCycle(0)
         Motor3_pwm.ChangeDutyCycle(0)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, 0, 0
+        gCurSpeed1 = 0
+        gCurSpeed2 = 0
+        gCurSpeed3 = 0
         stop_obstacle_detection()
 
 def interruptHandler():
@@ -236,22 +283,26 @@ def interruptHandler():
     if triggered1:
         triggered1 = False
         print("Interrupt from sensor 1!")
-        stopNoTime()
+        emergency_stop()
         return True
     if triggered2:
         triggered2 = False
         print("Interrupt from sensor 2!")
-        stopNoTime()
+        emergency_stop()
         return True
     if triggered3:
         triggered3 = False
         print("Interrupt from sensor 3!")
-        stopNoTime()
+        emergency_stop()
         return True
     return False
 
 # === Immediate Movement Functions ===
 def startForward():
+    global obstacle_detected
+    if obstacle_detected:
+        print("Cannot move forward - obstacle detected!")
+        return
     print("Starting forward movement")
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 stopped
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
@@ -262,9 +313,15 @@ def startForward():
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, gSliderSpeed, gSliderSpeed + motor3_compensate
+        gCurSpeed1 = 0
+        gCurSpeed2 = gSliderSpeed
+        gCurSpeed3 = gSliderSpeed + motor3_compensate
 
 def startBackward():
+    global obstacle_detected
+    if obstacle_detected:
+        print("Cannot move backward - obstacle detected!")
+        return
     print("Starting backward movement")
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 stopped
     GPIO.output(Motor2_Dir, GPIO.LOW)   # Motor 2 backward
@@ -275,9 +332,15 @@ def startBackward():
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = 0, gSliderSpeed, gSliderSpeed + motor3_compensate
+        gCurSpeed1 = 0
+        gCurSpeed2 = gSliderSpeed
+        gCurSpeed3 = gSliderSpeed + motor3_compensate
 
 def startTurnLeft():
+    global obstacle_detected
+    if obstacle_detected:
+        print("Cannot turn left - obstacle detected!")
+        return
     print("Starting left turn")
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 forward
     GPIO.output(Motor2_Dir, GPIO.LOW)   # Motor 2 backward
@@ -288,22 +351,34 @@ def startTurnLeft():
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = gSliderSpeed, gSliderSpeed, gSliderSpeed + motor3_compensate
+        gCurSpeed1 = gSliderSpeed
+        gCurSpeed2 = gSliderSpeed
+        gCurSpeed3 = gSliderSpeed + motor3_compensate
 
 def startTurnRight():
+    global obstacle_detected
+    if obstacle_detected:
+        print("Cannot turn right - obstacle detected!")
+        return
     print("Starting right turn")
     GPIO.output(Motor1_Dir, GPIO.LOW)   # Motor 1 backward
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
     GPIO.output(Motor3_Dir, GPIO.HIGH)  # Motor 3 forward (opposite direction)
-    start_obstacle_detection()
+    start_obstacle_detection()  
     with movement_lock:
         Motor1_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = gSliderSpeed, gSliderSpeed, gSliderSpeed + motor3_compensate
+        gCurSpeed1 = gSliderSpeed
+        gCurSpeed2 = gSliderSpeed
+        gCurSpeed3 = gSliderSpeed + motor3_compensate
 
 def startMoveLeft():
+    global obstacle_detected
+    if obstacle_detected:
+        print("Cannot strafe left - obstacle detected!")
+        return
     print("Starting left strafe")
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 forward
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
@@ -314,9 +389,15 @@ def startMoveLeft():
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = int(gSliderSpeed * 1.5), gSliderSpeed, gSliderSpeed + motor3_compensate
+        gCurSpeed1 = int(gSliderSpeed * 1.5)
+        gCurSpeed2 = gSliderSpeed
+        gCurSpeed3 = gSliderSpeed + motor3_compensate
 
 def startMoveRight():
+    global obstacle_detected
+    if obstacle_detected:
+        print("Cannot strafe right - obstacle detected!")
+        return
     print("Starting right strafe")
     GPIO.output(Motor1_Dir, GPIO.LOW)   # Motor 1 backward
     GPIO.output(Motor2_Dir, GPIO.LOW)   # Motor 2 backward
@@ -327,16 +408,22 @@ def startMoveRight():
         Motor2_pwm.ChangeDutyCycle(gSliderSpeed)
         Motor3_pwm.ChangeDutyCycle(gSliderSpeed + motor3_compensate)
         global gCurSpeed1, gCurSpeed2, gCurSpeed3
-        gCurSpeed1, gCurSpeed2, gCurSpeed3 = int(gSliderSpeed * 1.5), gSliderSpeed, gSliderSpeed + motor3_compensate
+        gCurSpeed1 = int(gSliderSpeed * 1.5)
+        gCurSpeed2 = gSliderSpeed
+        gCurSpeed3 = gSliderSpeed + motor3_compensate
 
 def immediateStop():
     print("Immediate stop")
+    global obstacle_detected
+    obstacle_detected = False  # Reset obstacle flag when manually stopping
     stopNoTime()
 
 # === Timed Movement Functions ===
 def goForwards(speed, time_ms):
     global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected
-    triggered1 = triggered2 = triggered3 = False
+    triggered1 = False
+    triggered2 = False
+    triggered3 = False
     obstacle_detected = False
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 stopped
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
@@ -350,12 +437,15 @@ def goForwards(speed, time_ms):
             print("Movement interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
+            print("Movement stopped - obstacle or interrupt detected")
             break
         time.sleep(0.01)
 
 def goBackwards(speed, time_ms):
     global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected
-    triggered1 = triggered2 = triggered3 = False
+    triggered1 = False
+    triggered2 = False
+    triggered3 = False
     obstacle_detected = False
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 stopped
     GPIO.output(Motor2_Dir, GPIO.LOW)   # Motor 2 backward
@@ -369,11 +459,13 @@ def goBackwards(speed, time_ms):
             print("Movement interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
+            print("Movement stopped - obstacle or interrupt detected")
             break
         time.sleep(0.01)
 
 def stopMotors(time_ms):
-    global interruptRequested
+    global interruptRequested, obstacle_detected
+    obstacle_detected = False  # Reset when explicitly stopping
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, 0, gCurSpeed3, 0)
     if time_ms >= 0:
         start = time.time()
@@ -388,7 +480,9 @@ def stopMotors(time_ms):
 
 def turnRight(speed, time_ms):
     global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected
-    triggered1 = triggered2 = triggered3 = False
+    triggered1 = False
+    triggered2 = False
+    triggered3 = False
     obstacle_detected = False
     GPIO.output(Motor1_Dir, GPIO.LOW)   # Motor 1 backward
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
@@ -402,12 +496,15 @@ def turnRight(speed, time_ms):
             print("Turn right interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
+            print("Turn stopped - obstacle or interrupt detected")
             break
         time.sleep(0.01)
 
 def turnLeft(speed, time_ms):
     global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected
-    triggered1 = triggered2 = triggered3 = False
+    triggered1 = False
+    triggered2 = False
+    triggered3 = False
     obstacle_detected = False
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 forward
     GPIO.output(Motor2_Dir, GPIO.LOW)   # Motor 2 backward
@@ -421,12 +518,15 @@ def turnLeft(speed, time_ms):
             print("Turn left interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
+            print("Turn stopped - obstacle or interrupt detected")
             break
         time.sleep(0.01)
 
 def moveRight(speed, time_ms):
     global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected
-    triggered1 = triggered2 = triggered3 = False
+    triggered1 = False
+    triggered2 = False
+    triggered3 = False
     obstacle_detected = False
     GPIO.output(Motor1_Dir, GPIO.LOW)   # Motor 1 backward
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
@@ -440,12 +540,15 @@ def moveRight(speed, time_ms):
             print("Move right interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
+            print("Strafe stopped - obstacle or interrupt detected")
             break
         time.sleep(0.01)
 
 def moveLeft(speed, time_ms):
     global triggered1, triggered2, triggered3, interruptRequested, obstacle_detected
-    triggered1 = triggered2 = triggered3 = False
+    triggered1 = False
+    triggered2 = False
+    triggered3 = False
     obstacle_detected = False
     GPIO.output(Motor1_Dir, GPIO.HIGH)  # Motor 1 forward
     GPIO.output(Motor2_Dir, GPIO.HIGH)  # Motor 2 forward
@@ -456,8 +559,10 @@ def moveLeft(speed, time_ms):
     start = time.time()
     while time.time() - start < time_ms / 1000:
         if commandCharacter:
+            print("Move left interrupted by new command")
             break
         if interruptHandler() or obstacle_detected:
+            print("Strafe stopped - obstacle or interrupt detected")
             break
         time.sleep(0.01)
 
@@ -480,6 +585,11 @@ def processImmediateCommand(command):
         immediateStop()
 
 def processCommand(command, time_ms):
+    global obstacle_detected
+    if obstacle_detected and command != "stop":
+        print(f"Command '{command}' blocked - obstacle detected! Use 'stop' to reset.")
+        return
+        
     if command == "forward":
         goForwards(gSliderSpeed, time_ms)
     elif command == "backward":
@@ -510,7 +620,7 @@ def speak(text):
                 subprocess.run(["espeak", text], check=True)
             except (subprocess.CalledProcessError, FileNotFoundError):
                 try:
-                    subprocess.run(["echo", text, "|", "festival", "--tts"], shell=True, check=True)
+                    subprocess.run(f"echo '{text}' | festival --tts", shell=True, check=True)
                 except (subprocess.CalledProcessError, FileNotFoundError):
                     subprocess.run(["spd-say", text], check=True)
         else:
@@ -519,34 +629,45 @@ def speak(text):
         try:
             if system == "windows":
                 vbs_script = f'CreateObject("SAPI.SpVoice").Speak "{text}"'
-                subprocess.run(["wscript", "/nologo", "-"], input=vbs_script, text=True, capture_output=True)
+                subprocess.run(["cscript", "//nologo", "-"], input=vbs_script, text=True, capture_output=True)
             elif system == "darwin":
                 applescript = f'say "{text}"'
                 subprocess.run(["osascript", "-e", applescript], check=True)
             else:
-                raise subprocess.CalledProcessError(1, "TTS failed")
-        except:
+                print(f"🔊 TTS (fallback): {text}")
+        except Exception:
             print(f"🔊 TTS: {text}")
 
 def listen():
     r = sr.Recognizer()
     with sr.Microphone() as source:
         print("🎙️ Listening...")
-        audio = r.listen(source)
+        r.pause_threshold = 1
+        r.adjust_for_ambient_noise(source, duration=1)
         try:
+            audio = r.listen(source, timeout=5)
             text = r.recognize_google(audio)
             print(f"🗣️ You said: {text}")
             return text.lower()
         except sr.UnknownValueError:
             print("❌ Didn't catch that.")
+            return None
         except sr.RequestError:
             print("❌ API error.")
-        return None
+            return None
+        except sr.WaitTimeoutError:
+            print("❌ Timed out waiting for speech.")
+            return None
 
 template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
-model = OllamaLLM(model="llama3")
-prompt = ChatPromptTemplate.from_template(template)
-chain = prompt | model
+try:
+    model = OllamaLLM(model="llama3")
+    prompt = ChatPromptTemplate.from_template(template)
+    chain = prompt | model
+except Exception as e:
+    print(f"Error initializing OllamaLLM: {e}")
+    model = None
+    chain = None
 
 directions = {
     "forward": ["go forward", "move forward", "move ahead", "advance"],
@@ -555,7 +676,7 @@ directions = {
     "turnLeft": ["turn left"],
     "turnRight": ["turn right"],
     "moveLeft": ["move left", "strafe left"],
-    "moveRight": ["move right", "strafe right"],
+    "moveRight": ["move right", "strafe right"]
 }
 time_patterns = {
     "seconds": r"(\d+)\s*seconds?",
@@ -582,8 +703,23 @@ def keyboard_control_continuous():
     print("🎮 Continuous keyboard mode activated!")
     print("Controls: ↑=Forward, ↓=Backward, ←=Turn Left, →=Turn Right")
     print("          A=Strafe Left, D=Strafe Right, SPACE=Stop, E=Exit")
-    last_key_state = {"up": False, "down": False, "left": False, "right": False, "a": False, "d": False, "space": False}
-    key_commands = {"up": "forward", "down": "backward", "left": "left", "right": "right", "a": "moveleft", "d": "moveright"}
+    last_key_state = {
+        "up": False,
+        "down": False,
+        "left": False,
+        "right": False,
+        "a": False,
+        "d": False,
+        "space": False
+    }
+    key_commands = {
+        "up": "forward",
+        "down": "backward",
+        "left": "left",
+        "right": "right",
+        "a": "moveleft",
+        "d": "moveright"
+    }
     while keyboard_mode_active and not exit_keyboard_mode:
         try:
             if keyboard.is_pressed("e"):
@@ -591,16 +727,23 @@ def keyboard_control_continuous():
                 processImmediateCommand("stop")
                 exit_keyboard_mode = True
                 break
-            current_key_states = {"up": keyboard.is_pressed("up"), "down": keyboard.is_pressed("down"), "left": keyboard.is_pressed("left"), "right": keyboard.is_pressed("right"), "a": keyboard.is_pressed("a"), "d": keyboard.is_pressed("d"), "space": keyboard.is_pressed("space")}
+            current_key_states = {
+                "up": keyboard.is_pressed("up"),
+                "down": keyboard.is_pressed("down"),
+                "left": keyboard.is_pressed("left"),
+                "right": keyboard.is_pressed("right"),
+                "a": keyboard.is_pressed("a"),
+                "d": keyboard.is_pressed("d"),
+                "space": keyboard.is_pressed("space")
+            }
             for key, is_pressed in current_key_states.items():
                 if is_pressed and not last_key_state[key]:
                     if key == "space":
                         processImmediateCommand("stop")
                         print("🛑 STOP pressed")
                     else:
-                        command = key_commands[key]
-                        processImmediateCommand(command)
-                        print(f"▶️ {key.upper()} pressed → {command}")
+                        processImmediateCommand(key_commands[key])
+                        print(f"▶️ {key.upper()} pressed → {key_commands[key]}")
             for key, is_pressed in current_key_states.items():
                 if not is_pressed and last_key_state[key] and key != "space":
                     processImmediateCommand("stop")
@@ -609,163 +752,123 @@ def keyboard_control_continuous():
             time.sleep(0.02)
         except Exception as e:
             print(f"⚠️ Keyboard control error: {e}")
+            immediateStop()
             time.sleep(0.1)
 
 async def process_user_input(user_input, context):
-    long_instruction = ""
-    contain_instructions = False
+    if not user_input:
+        return False
     instructions = [instr.strip() for instr in user_input.split("then")]
-    
+    command_sequence = []
+    has_movement = False
     for instruction in instructions:
-        instr_lower = instruction.lower()
-        direction = get_direction(instr_lower)
-        time_in_ms = convert_to_milliseconds(instr_lower)
-        
-        if 'turn left' in instr_lower:
-            direction = 'turnLeft'
-            time_in_ms = time_in_ms or 2000
-        elif 'turn right' in instr_lower:
-            direction = 'turnRight'
-            time_in_ms = time_in_ms or 2000
-        elif 'move left' in instr_lower or 'strafe left' in instr_lower:
-            direction = 'moveLeft'
-            time_in_ms = time_in_ms or 2000
-        elif 'move right' in instr_lower or 'strafe right' in instr_lower:
-            direction = 'moveRight'
-            time_in_ms = time_in_ms or 2000
-        
-        if direction and (time_in_ms is not None):
-            long_instruction += f"{direction} {time_in_ms} "
-            contain_instructions = True
+        direction = get_direction(instruction)
+        time_ms = convert_to_milliseconds(instruction)
+        if direction in ["turnLeft", "turnRight"] and time_ms is None:
+            time_ms = 1500  # Default turn duration
+        if direction and time_ms is not None:
+            command_sequence.append((direction, time_ms))
+            has_movement = True
         elif direction == "stop":
-            long_instruction += "stop -1"
-            contain_instructions = True
-    
-    if contain_instructions:
-        print("Bot:", long_instruction.strip())
-        words = long_instruction.strip().split()
-        for i in range(0, len(words), 2):
-            if i + 1 < len(words):
-                command = words[i]
-                duration = int(words[i + 1])
-                global commandCharacter, obstacle_detected
-                print(f"Executing: {command} for {duration}ms")
-                commandCharacter = command  # Set for the current command
-                obstacle_detected = False  # Reset obstacle flag
-                processCommand(command, duration)
-                commandCharacter = ""  # Clear after completion
-                await asyncio.sleep(duration / 1000)  # Wait for the command to finish
+            command_sequence.append(("stop", 0))
+            has_movement = True
+    if has_movement:
+        print(f"🤖 Executing sequence: {command_sequence}")
+        for command, duration in command_sequence:
+            global commandCharacter
+            commandCharacter = command
+            processCommand(command, duration)
+            commandCharacter = ""
+            if permStop or obstacle_detected:
+                print("Sequence interrupted by stop or obstacle.")
+                break
+            await asyncio.sleep(duration / 1000)
         return True
     return False
-
-keyboard_mode_active = False
-exit_keyboard_mode = False
 
 async def handle_conversation():
     global keyboard_mode_active, exit_keyboard_mode
     context = ""
-    print("Welcome to the AI Chatbot! Type 'exit' to quit.")
+    print("="*50 + "\n🤖 AI Omni-Wheel Robot Assistant Initialized 🤖\n" + "="*50)
     while True:
-        try:
-            mode = input("Use (s)peech, (t)ype or (k)eyboard? ").strip().lower()
-            if mode == 's':
-                while True:
-                    user_input = listen()
-                    if not user_input:
-                        continue
-                    if user_input.lower() == "exit":
-                        return
-                    if await process_user_input(user_input, context):
-                        context += f"\nUser: {user_input}\nAI: [Movement Command]"
+        mode = input("\nChoose mode: (s)peech, (t)ype, (k)eyboard, or (q)uit? ").strip().lower()
+        if mode in ['s', 'speech']:
+            while True:
+                user_input = listen()
+                if user_input == "exit":
+                    return
+                if not user_input:
+                    continue
+                if await process_user_input(user_input, context):
+                    context += f"\nUser: {user_input}\nAI: [Movement Command]"
+                else:
+                    if chain is None:
+                        print("Bot: AI model not available.")
+                        speak("AI model not available.")
                     else:
-                        if chain:
-                            try:
-                                result = chain.invoke({"context": context, "question": user_input})
-                                print("Bot:", result)
-                                speak(str(result))
-                                context += f"\nUser: {user_input}\nAI: {result}"
-                            except Exception as e:
-                                print(f"LLM error: {e}")
-                                response = "I'm having trouble processing that request."
-                                print("Bot:", response)
-                                speak(response)
-                        else:
-                            response = "LLM not available. Please use movement commands."
-                            print("Bot:", response)
-                            speak(response)
-                    continue_mode = input("Continue speech mode? (y/n): ").strip().lower()
-                    if continue_mode == 'n':
-                        break
-            elif mode == 't':
-                while True:
-                    user_input = input("You: ")
-                    if user_input.lower() == "exit":
-                        return
-                    if await process_user_input(user_input, context):
-                        context += f"\nUser: {user_input}\nAI: [Movement Command]"
+                        result = chain.invoke({"context": context, "question": user_input})
+                        print(f"Bot: {result}")
+                        speak(str(result))
+                        context += f"\nUser: {user_input}\nAI: {result}"
+                continue_mode = input("Continue speech mode? (y/n): ").strip().lower()
+                if continue_mode == 'n':
+                    break
+        elif mode in ['t', 'type']:
+            while True:
+                user_input = input("You: ")
+                if user_input.lower() == "exit":
+                    return
+                if not user_input:
+                    continue
+                if await process_user_input(user_input, context):
+                    context += f"\nUser: {user_input}\nAI: [Movement Command]"
+                else:
+                    if chain is None:
+                        print("Bot: AI model not available.")
+                        speak("AI model not available.")
                     else:
-                        if chain:
-                            try:
-                                result = chain.invoke({"context": context, "question": user_input})
-                                print("Bot:", result)
-                                speak(str(result))
-                                context += f"\nUser: {user_input}\nAI: {result}"
-                            except Exception as e:
-                                print(f"LLM error: {e}")
-                                response = "I'm having trouble processing that request."
-                                print("Bot:", response)
-                                speak(response)
-                        else:
-                            response = "LLM not available. Please use movement commands."
-                            print("Bot:", response)
-                            speak(response)
-                    continue_mode = input("Continue text mode? (y/n): ").strip().lower()
-                    if continue_mode == 'n':
-                        break
-            elif mode == 'k':
-                keyboard_mode_active = True
-                exit_keyboard_mode = False
-                keyboard_thread = threading.Thread(target=keyboard_control_continuous, daemon=True)
-                keyboard_thread.start()
-                while keyboard_mode_active and not exit_keyboard_mode:
-                    await asyncio.sleep(0.1)
-                keyboard_mode_active = False
-                print("🔄 Returning to mode selection...")
-            else:
-                print("❌ Invalid mode. Please choose 's', 't', or 'k'.")
-                continue
-        except KeyboardInterrupt:
-            print("\n👋 Shutting down...")
-            return
-        except Exception as e:
-            print(f"Error in conversation handler: {e}")
-            continue
+                        result = chain.invoke({"context": context, "question": user_input})
+                        print(f"Bot: {result}")
+                        speak(str(result))
+                        context += f"\nUser: {user_input}\nAI: {result}"
+                continue_mode = input("Continue text mode? (y/n): ").strip().lower()
+                if continue_mode == 'n':
+                    break
+        elif mode in ['k', 'keyboard']:
+            keyboard_mode_active = True
+            exit_keyboard_mode = False
+            keyboard_thread = threading.Thread(target=keyboard_control_continuous, daemon=True)
+            keyboard_thread.start()
+            while keyboard_mode_active and not exit_keyboard_mode:
+                await asyncio.sleep(0.1)
+            keyboard_mode_active = False
+            print("🔄 Returning to mode selection...")
+        elif mode in ['q', 'quit']:
+            break
+        else:
+            print("❌ Invalid mode. Please choose 's', 't', 'k', or 'q'.")
 
 async def main():
+    global obstacle_detection_thread
     try:
+        # Start obstacle detection thread
+        obstacle_detection_thread = threading.Thread(target=obstacle_detection_loop, daemon=True)
+        obstacle_detection_thread.start()
         await handle_conversation()
-    except KeyboardInterrupt:
-        print("\n👋 Shutting down...")
-    except Exception as e:
-        print(f"Main error: {e}")
+    except (KeyboardInterrupt, SystemExit):
+        print("\n👋 User interrupted. Shutting down...")
     finally:
-        print("Cleaning up...")
-        try:
-            Motor1_pwm.stop()
-            Motor2_pwm.stop()
-            Motor3_pwm.stop()
-            GPIO.cleanup()
-        except Exception as e:
-            print(f"Cleanup error: {e}")
+        print("Final cleanup: Stopping motors and releasing GPIO pins...")
+        immediateStop()
+        time.sleep(0.1)
+        GPIO.remove_event_detect(Echo1)
+        GPIO.remove_event_detect(Echo2)
+        GPIO.remove_event_detect(Echo3)
+        Motor1_pwm.stop()
+        Motor2_pwm.stop()
+        Motor3_pwm.stop()
+        GPIO.cleanup()
+        print("✅ Cleanup complete. Goodbye!")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Goodbye!")
-    except Exception as e:
-        print(f"Program error: {e}")
-        try:
-            GPIO.cleanup()
-        except:
-            pass
+    asyncio.run(main())
