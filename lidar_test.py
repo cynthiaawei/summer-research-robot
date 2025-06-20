@@ -60,7 +60,7 @@ def find_serial_port():
     return None
 
 def read_tfluna(ser):
-    """Read TF-Luna data with improved error handling"""
+    """Read TF-Nova data with improved error handling"""
     try:
         # Clear any existing data in buffer
         ser.flushInput()
@@ -123,7 +123,7 @@ def main():
         print("Make sure:")
         print("1. UART is enabled in /boot/config.txt")
         print("2. Your user is in the 'dialout' group")
-        print("3. TF-Luna is connected correctly")
+        print("3. TF-Nova is connected correctly")
         return
     
     print("TF-Luna LiDAR Reader - Press Ctrl+C to stop")
