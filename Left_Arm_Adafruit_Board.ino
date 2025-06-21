@@ -15,6 +15,7 @@
 #include <Wire.h>
 #define Left_Ada_Addr 5
 int receivedData = 0;
+int time = 2500;
 
 void setAngleLimits(){ //adjust as needed, 0 - 300 degrees
   ax12a.setAngleLimit(ID_1, 0, 1023);
@@ -34,6 +35,17 @@ void setVoltageLimits(){ //9~11V
   ax12a.setVoltageLimit(ID_6, 9, 11);
   ax12a.setVoltageLimit(ID_7, 9, 11);
 }
+
+void setTorqueLimits(){
+  ax12a.setMaxTorque(ID_1, 1023);
+  ax12a.setMaxTorque(ID_2, 500);
+  ax12a.setMaxTorque(ID_3, 500);
+  ax12a.setMaxTorque(ID_4, 500);
+  ax12a.setMaxTorque(ID_5, 500);
+  ax12a.setMaxTorque(ID_6, 500);
+  ax12a.setMaxTorque(ID_7, 500);
+}
+
 void setTorqueOn(){
   ax12a.torqueStatus(ID_1, true);
   ax12a.torqueStatus(ID_2, true);
@@ -127,6 +139,101 @@ void moveToState7(){ //move hand wave right
   ax12a.moveSpeed(ID_6, 525, servoSpeed);
   ax12a.moveSpeed(ID_7, 512, servoSpeed);
 }
+void moveToState8(){ //move hand wave right
+  ax12a.moveSpeed(ID_1, 180, servoSpeed);
+  ax12a.moveSpeed(ID_2, 180, servoSpeed);
+  ax12a.moveSpeed(ID_3, 180, servoSpeed);
+  ax12a.moveSpeed(ID_4, 180, servoSpeed);
+  ax12a.moveSpeed(ID_5, 180, servoSpeed);
+  ax12a.moveSpeed(ID_6, 520, servoSpeed);
+  ax12a.moveSpeed(ID_7, 180, servoSpeed);
+}
+
+void moveToState9(){ //move hand wave right
+  ax12a.moveSpeed(ID_1, 520, servoSpeed);
+  ax12a.moveSpeed(ID_2, 520, servoSpeed);
+  ax12a.moveSpeed(ID_3, 520, servoSpeed);
+  ax12a.moveSpeed(ID_4, 520, servoSpeed);
+  ax12a.moveSpeed(ID_5, 520, servoSpeed);
+  ax12a.moveSpeed(ID_6, 520, servoSpeed);
+  ax12a.moveSpeed(ID_7, 520, servoSpeed);
+}
+
+void test1(){
+  ax12a.moveSpeed(ID_1, 0, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_2, 500, servoSpeed);
+  ax12a.moveSpeed(ID_3, 1023-500, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_4, 1023-300, servoSpeed);
+  ax12a.moveSpeed(ID_5, 300, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_4, 1023-600, servoSpeed);
+  ax12a.moveSpeed(ID_5, 600, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_4, 1023-300, servoSpeed);
+  ax12a.moveSpeed(ID_5, 300, servoSpeed);
+  delay(500);
+  delay(6000);
+  Serial.println(ax12a.readLoad(ID_1));
+
+  ax12a.moveSpeed(ID_1, 600, 100);
+  delay(500);
+  ax12a.moveSpeed(ID_2, 600, servoSpeed);
+  ax12a.moveSpeed(ID_3, 1023-600, servoSpeed);
+  delay(5000);
+  Serial.println(ax12a.readLoad(ID_1));
+
+  ax12a.moveSpeed(ID_1, 1023, 200);
+  delay(500);
+  ax12a.moveSpeed(ID_2, 500, servoSpeed);
+  ax12a.moveSpeed(ID_3, 1023-500, servoSpeed);
+  delay(500);
+  delay(5000);
+  Serial.println(ax12a.readLoad(ID_1));
+  Serial.println("");
+}
+
+
+
+void extendShake(){
+  if(ax12a.readSpeed(ID_1) <= 0){
+    ax12a.torqueStatus(ID_1, true);
+    ax12a.setMaxTorque(ID_1, 1023);
+  }
+
+  ax12a.moveSpeed(ID_1, 100, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_2, 1023-250, servoSpeed);
+  ax12a.moveSpeed(ID_3, 250, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_6, 520, servoSpeed);
+  delay(500);
+  ax12a.moveSpeed(ID_4, 1023-500, servoSpeed/2);
+  ax12a.moveSpeed(ID_5, 500, servoSpeed/2);
+  //ax12a.setMaxTorque(ID_1, 0);
+
+
+  delay(500);
+  Serial.println(ax12a.readSpeed(ID_1));
+  if(ax12a.readSpeed(ID_1) <= 0){
+    ax12a.torqueStatus(ID_1, true);
+    ax12a.setMaxTorque(ID_1, 1023);
+  }
+  ax12a.moveSpeed(ID_1, 750, servoSpeed);
+  // delay(500);
+  // ax12a.moveSpeed(ID_2, 1023-300, servoSpeed/4);
+  // ax12a.moveSpeed(ID_3, 300, servoSpeed/4);
+  // delay(500);
+  // ax12a.moveSpeed(ID_4, 1023-450, servoSpeed/4);
+  // ax12a.moveSpeed(ID_5, 450, servoSpeed/4);
+  // delay(500);
+  // ax12a.moveSpeed(ID_6, 250, servoSpeed);
+  
+  delay(time*1.5);
+  Serial.println("ran");
+}
+
 
 void setup()
 {
@@ -137,6 +244,7 @@ void setup()
 
   ax12a.begin(BaudRate, DirectionPin, &Serial1);
   setTorqueOn();
+  setTorqueLimits();
   setAngleLimits();
   setVoltageLimits();
   setComplianceMargins();
@@ -161,36 +269,7 @@ void receiveEvent(int byteCount) {
 
 void loop()
 {
-  if(receivedData == 5){
-    Serial.print("ACTIVATE MAGIC");
-    moveToState2();
-    delay(2000);
-    moveToState3();
-    delay(2000);
-    //moveToState4();
-    //delay(2000);
-  }else if(receivedData == 6){
-    //shutdown
-    Serial.println("Shutdown Arm Received");
-    moveToState3();
-    delay(2000);
-    moveToState2();
-    delay(2000);
-    moveToState1();
-  }else if(receivedData == 7){
-    //wave
-    moveToState5();
-    delay(2000);
+extendShake();
 
-    int count = 0;
-    do{
-      moveToState6();
-      delay(2000);
-      moveToState7();
-      delay(2000);
-      count++;
-    }while(count < 3);
-  }
-  receivedData = 0;
-  delay(10);
+  
 }
