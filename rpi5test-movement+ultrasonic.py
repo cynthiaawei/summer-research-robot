@@ -1544,9 +1544,17 @@ async def process_user_input(user_input, context):
             commandCharacter = ""
             
             # Check for interrupts
-            if (permStop or obstacle_detected or 
-                return_to_mode_selection or interrupt_event.is_set()):
-                logger.info("Command sequence interrupted")
+            if (permStop):
+                logger.info("Command sequence interrupted, permStop")
+                break
+            if(obstacle_detected):
+                logger.info("Command sequence interrupted, obstacle_detected")
+                break
+            if(return_to_mode_selection):
+                logger.info("Command sequence interrupted, return to mode selected")
+                break
+            if(interrupt_event.is_set()):
+                logger.info("Command sequence interrupted, interrupt event")
                 break
             
             # Wait for command completion
