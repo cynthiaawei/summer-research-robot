@@ -992,7 +992,7 @@ def obstacle_detection_loop():
                 # Only check when robot is moving
                 if any([gCurSpeed1 > 0, gCurSpeed2 > 0, gCurSpeed3 > 0]):
                     distances = []
-                    for trig, echo in [(Trig1, Echo1), (Trig2, Echo2)]:
+                    for trig, echo in [(Trig1, Echo1), (Trig2, Echo2), (Trig3, Echo3)]:
                         dist = get_distance(trig, echo, timeout=0.3)
                         if dist > 0:
                             distances.append(dist)
