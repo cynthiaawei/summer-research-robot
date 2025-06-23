@@ -1192,9 +1192,9 @@ def move_robot(direction, speed=None, duration_ms=None):
         while time.time() - start_time < duration_ms / 1000:
             print(time.time() - start_time)
             print(duration_ms / 1000)
-            if (obstacle_detected or return_to_mode_selection or 
-                interrupt_event.is_set() or commandCharacter):
-                break
+            # if (obstacle_detected or return_to_mode_selection or 
+            #     interrupt_event.is_set() or commandCharacter):
+            #     break
             time.sleep(0.01)
         
         # Stop after duration
