@@ -1184,6 +1184,9 @@ def move_robot(direction, speed=None, duration_ms=None):
                      gCurSpeed3, config["speeds"][2])
     
     # Handle duration
+    print("time is")
+    print(duration_ms)
+    print("\n")
     if duration_ms is not None and duration_ms > 0:
         start_time = time.time()
         while time.time() - start_time < duration_ms / 1000:
@@ -1194,6 +1197,7 @@ def move_robot(direction, speed=None, duration_ms=None):
         
         # Stop after duration
         if not obstacle_detected:
+            print("ended bc no obstac detected \n")
             changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, 0, gCurSpeed3, 0)
     
     return True
@@ -1246,13 +1250,16 @@ def immediateStop():
 def stopMotors(time_ms):
     """Stop motors with optional delay"""
     global obstacle_detected, return_to_mode_selection, permStop
-    
+
     obstacle_detected = False
     return_to_mode_selection = False
     interrupt_event.clear()
     
+    print("stopMotors called")
+
     changeSpeedSmooth(gCurSpeed1, 0, gCurSpeed2, 0, gCurSpeed3, 0)
-    
+    print("motors slowed")
+
     if time_ms >= 0:
         start_time = time.time()
         while time.time() - start_time < time_ms / 1000:
