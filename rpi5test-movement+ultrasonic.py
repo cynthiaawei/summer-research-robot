@@ -890,9 +890,9 @@ Motor3_Dir = 26
 Echo1 = 31
 Echo2 = 29
 Echo3 = 22
-Trig1 = 11
+Trig1 = 15
 Trig2 = 13
-Trig3 = 15
+Trig3 = 11
 
 # === GPIO Setup ===
 GPIO.setmode(GPIO.BOARD)
