@@ -1,2 +1,2 @@
 sudo apt install cmake
-pip install cv2 opencv-python mediapipe keyboard SpeechRecognition bleak langchain-ollama dlib face_recognition
+pip install cv2 opencv-python mediapipe keyboard SpeechRecognition bleak langchain-ollama dlib face_recognition RPi.GPIO
