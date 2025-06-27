@@ -2,7 +2,7 @@
 import threading, time, cv2, asyncio
 from collections import deque
 
-import hand, face, face_helper
+import hand, movement_RBG, face_helper
 
 def hand_thread(cap):
     detector = hand.handDetector() # what was outside of the main while loop in the main function
@@ -18,7 +18,7 @@ def hand_thread(cap):
 def face_thread(cap):
     # tell your face_helper to use the same cap
     face_helper.cap = cap
-    asyncio.run(face.main())
+    asyncio.run(movement_RBG.main())
 
 if __name__ == "__main__":
     cap = cv2.VideoCapture(0, cv2.CAP_ANY)
