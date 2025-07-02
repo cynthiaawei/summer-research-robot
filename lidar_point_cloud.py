@@ -1,7 +1,7 @@
 import serial
 import time
 import csv
-
+import matplotlib.pyplot as plt
 
 def find_serial_port():
     """Try different serial port names"""
@@ -78,7 +78,8 @@ def main():
         out = input("Should I start Recording: ")
         if out == 'y':
             break
-    
+    total_time = 2
+    interval = 0.05
     if not ser:
         print("ERROR: Could not open any serial port!")
         return
@@ -88,17 +89,22 @@ def main():
     
     success_count = 0
     error_count = 0
+    start=time.time()
+    times=[]
+    distances=[]
     with open('file.csv', 'w', newline='') as f:
         csvwriter = csv.writer(f)
         try:
-            while True:
+            while (time.time-start)<total_time:
                 result, error = read_tfluna(ser)
-                
+                t=time.time()-start
                 if result:
                     dist, strength, temp = result
                     success_count += 1
                     print(f"✓ Distance: {dist:4d} cm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Success: {success_count}")
-                    csvwriter.writerow([dist, strength, temp])
+                    times.append(t)
+                    distances.append(dist)
+                    csvwriter.writerow([dist, strength, f"{temp:.1f}", f"{t:.2f}"])
                     # Check for reasonable values
                     if dist == 0 or dist > 8000:
                         print(f"  ⚠ Warning: Distance {dist}cm seems unusual")
@@ -115,14 +121,21 @@ def main():
                         print("Check wiring and power to TF-Luna sensor.")
                         break
                 
-                time.sleep(0.1)
+                time.sleep(interval)
+                
                 
         except KeyboardInterrupt:
             print(f"\nStopped. Success: {success_count}, Errors: {error_count}")
         
-        finally:
-            ser.close()
-            print("Serial port closed.")
+        ser.close()
+        plt.plot(times, distances)
+        plt.xlabel('Time (s)')
+        plt.ylabel('Distance (cm)')
+        plt.title('TF-Luna Distance vs Time')
+        plt.tight_layout()
+        plt.show()
+
+
 
 if __name__ == "__main__":
     main()
