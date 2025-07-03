@@ -2,6 +2,16 @@ import cv2
 import mediapipe as mp
 import time
 from collections import deque
+import RPi.GPIO as GPIO
+
+# THESE NUMBERS ARE TO BE MODIFIED
+wave = 4
+hand = 5
+
+# === GPIO Setup ===
+GPIO.setmode(GPIO.BOARD)
+GPIO.setup(wave, GPIO.OUT, initial=GPIO.LOW)
+GPIO.setup(hand, GPIO.OUT,  initial=GPIO.LOW)
 
 class handDetector():
     def __init__(self, mode=False, maxHands = 2, detectionCon=0.5,trackCon=0.5):
