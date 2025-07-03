@@ -13,6 +13,11 @@ GPIO.setmode(GPIO.BOARD)
 GPIO.setup(wave, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(hand, GPIO.OUT,  initial=GPIO.LOW)
 
+current_time = 0
+wave_time = 2
+handshake_time = 2
+wait_time = 2
+
 class handDetector():
     def __init__(self, mode=False, maxHands = 2, detectionCon=0.5,trackCon=0.5):
         self.mode = mode
@@ -107,6 +112,7 @@ def high_five_position(lmList, detector):
 
 
 def is_waving(lmList, detector, index_x_history):
+    if ((time.time - current_time) < wait_time): return False
     if len(lmList) < 21:
         return False
     
@@ -119,7 +125,10 @@ def is_waving(lmList, detector, index_x_history):
     # Check if index finger tip is swinging side to side
     index_motion = max(index_x_history) - min(index_x_history)
 
-    return index_motion > 40
+    if(index_motion <= 40): return False
+    current_time = time.time()
+    GPIO.output(wave, HIGH)
+    return True
 
 def fingers_close_together(lmList):
     if len(lmList) < 21:
@@ -132,9 +141,12 @@ def fingers_close_together(lmList):
     return True
 
 def is_shaking_hands(lmList):
+    if ((time.time - current_time) < wait_time): return False
     if not fingers_close_together(lmList): return False
     if abs(lmList[5][2]-lmList[0][2]) > 50:
         return False
+    current_time = time.time()
+    GPIO.output(hand, HIGH)
     return True
 
 def main():
@@ -154,6 +166,9 @@ def main():
                 print("waving")
             elif is_shaking_hands(lmList):
                 print("shaking hands")
+            else:
+                GPIO.output(hand, FALSE)
+                GPIO.output(wave, HIGH)
                 
 def process_hand_frame(frame, history, detector): #  only the while loop inside of main
     """
