@@ -15,7 +15,11 @@
 #define ID_6  (7u)
 
 #include <Wire.h>
-#define Left_Ada_Addr 5
+//#define Left_Ada_Addr 5
+
+#define D0 3
+#define D1 5
+#define D2 7
 
 // set up servo
 Servo leftServo;
@@ -258,6 +262,10 @@ void setup()
   setVoltageLimits();
   setComplianceMargins();
 
+  pinMode(D0, INPUT);
+  pinMode(D1, INPUT);
+  pinMode(D2, INPUT);
+
   leftServo.attach(9); // pin 9 is for the left servo
   //changeSpeedSmooth(leftServo, 0);
 }
@@ -300,14 +308,26 @@ void loop()
   // ax12a.moveSpeed(ID_5, 450, servoSpeed);
   // ax12a.moveSpeed(ID_6, 450, servoSpeed);
 
-  normalPos();
-  delay(5000);
-  reachHand();
-  delay(5000);
-  openHand();
-  delay(5000);
-  wave();
-  delay(5000);
+  if(!D2 && !D1 && D0){ // waving hand 001
+    wave();
+    delay(1000);
+
+  } else if(!D2 && D1 && !D0){ //shake hand 010
+    reachHand();
+  } else if(D2 && D1 && D0){
+    
+  } else {
+    // Do nothing
+  }
+
+  // normalPos();
+  // delay(5000);
+  // reachHand();
+  // delay(5000);
+  // openHand();
+  // delay(5000);
+  // wave();
+  // delay(5000);
 
   // Serial.println("500");
   // ax12a.moveSpeed(ID_6, 500, servoSpeed);
