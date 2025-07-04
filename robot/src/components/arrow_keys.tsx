@@ -4,10 +4,10 @@ interface RobotStatus {
   status: string;
   message: string;
   obstacle_detected: boolean;
-  obstacle_sensor?: string;
-  obstacle_distance?: number;
+  obstacle_sensor?: string;  // NEW: Which sensor detected obstacle
+  obstacle_distance?: number;  // NEW: Distance of obstacle
   current_speeds: Record<string, number>;
-  sensor_distances?: Record<string, number>;
+  sensor_distances?: Record<string, number>;  // NEW: Individual sensor readings
   last_command: string;
   uptime: number;
   gpio_available?: boolean;
@@ -15,11 +15,8 @@ interface RobotStatus {
 
 type WSMessage =
   | { type: 'status_update'; data: RobotStatus }
-  | { type: 'arrow_key_pressed'; data: { direction: string; success: boolean; message: string } }
-  | { type: 'arrow_key_released'; data: { direction: string; success: boolean; message: string } }
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
-  | { type: 'obstacle_reset'; data: { message: string; success: boolean } }
   | { type: 'error'; data: { message: string } }
   | { type: 'ping' }
   | { type: 'pong' };
@@ -29,7 +26,6 @@ const ArrowKeys: React.FC = () => {
   const [response, setResponse] = useState<string>('');
   const [status, setStatus] = useState<RobotStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [pressedKeys, setPressedKeys] = useState<Set<string>>(new Set());
 
   // Setup WebSocket connection
   useEffect(() => {
@@ -54,19 +50,10 @@ const ArrowKeys: React.FC = () => {
             case 'status_update':
               setStatus(data.data);
               break;
-            case 'arrow_key_pressed':
-              setResponse(data.data.message);
-              break;
-            case 'arrow_key_released':
-              setResponse(data.data.message);
-              break;
             case 'direction_executed':
               setResponse(`Direction ${data.data.direction} ${data.data.success ? 'succeeded' : 'failed'}`);
               break;
             case 'robot_stopped':
-              setResponse(data.data.message);
-              break;
-            case 'obstacle_reset':
               setResponse(data.data.message);
               break;
             case 'error':
@@ -90,9 +77,6 @@ const ArrowKeys: React.FC = () => {
         setResponse('WebSocket disconnected - reconnecting...');
         setWs(null);
         
-        // Clear pressed keys on disconnect
-        setPressedKeys(new Set());
-        
         // Reconnect after 3 seconds
         reconnectTimer = setTimeout(connect, 3000);
       };
@@ -110,27 +94,19 @@ const ArrowKeys: React.FC = () => {
     };
   }, []);
 
-  // Main function for sending arrow key commands with state tracking
-  const sendArrowKeyCommand = (direction: string, keyState: 'pressed' | 'released') => {
+  const sendDirection = (direction: string) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log(`Sending arrow key command: ${direction} ${keyState}`);
       ws.send(JSON.stringify({
-        type: 'arrow_key_command',
-        data: { 
-          direction,
-          key_state: keyState
-        }
+        type: 'direction_command',
+        data: { direction }
       }));
     } else {
       setResponse('WebSocket not connected');
-      console.error('WebSocket not connected');
     }
   };
+
   const sendStop = () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log('Sending stop command');
-      // Clear all pressed keys when manually stopping
-      setPressedKeys(new Set());
       ws.send(JSON.stringify({ type: 'stop_command' }));
     } else {
       setResponse('WebSocket not connected');
@@ -139,8 +115,8 @@ const ArrowKeys: React.FC = () => {
 
   const resetObstacle = () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log('Sending reset obstacle command');
       ws.send(JSON.stringify({ type: 'reset_obstacle' }));
+      setResponse('Obstacle detection reset');
     } else {
       setResponse('WebSocket not connected');
     }
@@ -156,112 +132,20 @@ const ArrowKeys: React.FC = () => {
     e.currentTarget.style.boxShadow = '0 8px 16px rgba(102, 126, 234, 0.3)';
   };
 
-  // Mouse down handler with proper key state tracking
   const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>, direction: string) => {
-    e.preventDefault();
     e.currentTarget.style.transform = 'translateY(-2px) scale(1.02)';
-    
-    // Don't send command if already pressed
-    if (!pressedKeys.has(direction)) {
-      console.log(`Mouse down: ${direction}`);
-      setPressedKeys(prev => new Set([...prev, direction]));
-      sendArrowKeyCommand(direction, 'pressed');
-    }
+    sendDirection(direction);
   };
 
-  // Mouse up handler with proper key state tracking
-  const handleMouseUp = (e: React.MouseEvent<HTMLButtonElement>, direction: string) => {
-    e.preventDefault();
+  const handleMouseUp = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.currentTarget.style.transform = 'translateY(-4px) scale(1.05)';
-    
-    // Only send release if key was pressed
-    if (pressedKeys.has(direction)) {
-      console.log(`Mouse up: ${direction}`);
-      setPressedKeys(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(direction);
-        return newSet;
-      });
-      sendArrowKeyCommand(direction, 'released');
-    }
+    sendStop();
   };
 
-  // Mouse leave handler with proper key state tracking
-  const handleMouseLeaveAndStop = (e: React.MouseEvent<HTMLButtonElement>, direction: string) => {
+  const handleMouseLeaveAndStop = (e: React.MouseEvent<HTMLButtonElement>) => {
     handleMouseLeave(e);
-    
-    // Only send release if key was pressed
-    if (pressedKeys.has(direction)) {
-      console.log(`Mouse leave: ${direction}`);
-      setPressedKeys(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(direction);
-        return newSet;
-      });
-      sendArrowKeyCommand(direction, 'released');
-    }
+    sendStop();
   };
-
-  // Keyboard event handlers for actual arrow keys
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Prevent default arrow key behavior (scrolling)
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        e.preventDefault();
-      }
-
-      const keyMap: Record<string, string> = {
-        'ArrowUp': 'up',
-        'ArrowDown': 'down', 
-        'ArrowLeft': 'left',
-        'ArrowRight': 'right'
-      };
-
-      const direction = keyMap[e.key];
-      if (direction && !pressedKeys.has(direction)) {
-        console.log(`Keyboard down: ${direction}`);
-        setPressedKeys(prev => new Set([...prev, direction]));
-        sendArrowKeyCommand(direction, 'pressed');
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      const keyMap: Record<string, string> = {
-        'ArrowUp': 'up',
-        'ArrowDown': 'down',
-        'ArrowLeft': 'left', 
-        'ArrowRight': 'right'
-      };
-
-      const direction = keyMap[e.key];
-      if (direction && pressedKeys.has(direction)) {
-        console.log(`Keyboard up: ${direction}`);
-        setPressedKeys(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(direction);
-          return newSet;
-        });
-        sendArrowKeyCommand(direction, 'released');
-      }
-    };
-
-    // Add event listeners
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    // Cleanup
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [pressedKeys, ws]);
-
-  // Cleanup pressed keys when WebSocket changes
-  useEffect(() => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setPressedKeys(new Set());
-    }
-  }, [ws]);
 
   const containerStyle = {
     minHeight: '100vh',
@@ -359,7 +243,7 @@ const ArrowKeys: React.FC = () => {
     <div style={containerStyle}>
       <div style={cardStyle}>
         <h2 style={titleStyle}>Arrow Key Control</h2>
-        <p style={subtitleStyle}>Use the directional buttons or arrow keys to control your robot</p>
+        <p style={subtitleStyle}>Use the directional buttons to control your robot</p>
         
         <div style={connectionIndicatorStyle}>
           <div style={statusDotStyle}></div>
@@ -369,73 +253,48 @@ const ArrowKeys: React.FC = () => {
           </span>
         </div>
 
-        {/* Active keys indicator for debugging */}
-        {pressedKeys.size > 0 && (
-          <div style={{
-            textAlign: 'center',
-            marginBottom: '1rem',
-            padding: '0.5rem',
-            background: '#e6fffa',
-            borderRadius: '8px',
-            fontSize: '0.9rem',
-            color: '#234e52'
-          }}>
-            Active: {Array.from(pressedKeys).join(', ')}
-          </div>
-        )}
+        {/* Remove the big obstacle alert banner */}
 
         <div style={gridStyle}>
           <button 
-            style={{
-              ...buttonStyle,
-              background: pressedKeys.has('up') ? 'linear-gradient(135deg, #48bb78, #38a169)' : buttonStyle.background
-            }}
+            style={buttonStyle}
             onMouseDown={(e) => handleMouseDown(e, 'up')}
-            onMouseUp={(e) => handleMouseUp(e, 'up')}
-            onMouseLeave={(e) => handleMouseLeaveAndStop(e, 'up')}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeaveAndStop}
             onMouseEnter={handleMouseEnter}
-            title="Forward (Arrow Up)"
+            title="Forward"
           >
             ↑
           </button>
           <div style={rowStyle}>
             <button 
-              style={{
-                ...buttonStyle,
-                background: pressedKeys.has('left') ? 'linear-gradient(135deg, #48bb78, #38a169)' : buttonStyle.background
-              }}
+              style={buttonStyle}
               onMouseDown={(e) => handleMouseDown(e, 'left')}
-              onMouseUp={(e) => handleMouseUp(e, 'left')}
-              onMouseLeave={(e) => handleMouseLeaveAndStop(e, 'left')}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeaveAndStop}
               onMouseEnter={handleMouseEnter}
-              title="Turn Left (Arrow Left)"
+              title="Turn Left"
             >
               ←
             </button>
             <button 
-              style={{
-                ...buttonStyle,
-                background: pressedKeys.has('right') ? 'linear-gradient(135deg, #48bb78, #38a169)' : buttonStyle.background
-              }}
+              style={buttonStyle}
               onMouseDown={(e) => handleMouseDown(e, 'right')}
-              onMouseUp={(e) => handleMouseUp(e, 'right')}
-              onMouseLeave={(e) => handleMouseLeaveAndStop(e, 'right')}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseLeaveAndStop}
               onMouseEnter={handleMouseEnter}
-              title="Turn Right (Arrow Right)"
+              title="Turn Right"
             >
               →
             </button>
           </div>
           <button 
-            style={{
-              ...buttonStyle,
-              background: pressedKeys.has('down') ? 'linear-gradient(135deg, #48bb78, #38a169)' : buttonStyle.background
-            }}
+            style={buttonStyle}
             onMouseDown={(e) => handleMouseDown(e, 'down')}
-            onMouseUp={(e) => handleMouseUp(e, 'down')}
-            onMouseLeave={(e) => handleMouseLeaveAndStop(e, 'down')}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseLeaveAndStop}
             onMouseEnter={handleMouseEnter}
-            title="Backward (Arrow Down)"
+            title="Backward"
           >
             ↓
           </button>
@@ -523,6 +382,7 @@ const ArrowKeys: React.FC = () => {
                 <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
               </div>
 
+              {/* Remove the obstacle alert banner */}
               {status.gpio_available !== undefined && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#718096' }}>
                   GPIO: {status.gpio_available ? 'Available' : 'Simulation Mode'}
@@ -542,24 +402,11 @@ const ArrowKeys: React.FC = () => {
         }}>
           <strong>Instructions:</strong>
           <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem' }}>
-            <li>Press and hold buttons/arrow keys to move</li>
+            <li>Press and hold buttons to move</li>
             <li>Release to stop automatically</li>
             <li>Use STOP for emergency halt</li>
             <li>Sensors: 1=Front, 2=Left, 3=Right</li>
-            <li>Active keys shown above buttons</li>
           </ul>
-        </div>
-
-        {/* Debug info - remove in production */}
-        <div style={{
-          marginTop: '1rem',
-          padding: '0.5rem',
-          background: '#f8f9fa',
-          borderRadius: '4px',
-          fontSize: '0.8rem',
-          color: '#6c757d'
-        }}>
-          <strong>Debug:</strong> WebSocket State: {ws?.readyState}, Pressed Keys: {pressedKeys.size}
         </div>
       </div>
     </div>
