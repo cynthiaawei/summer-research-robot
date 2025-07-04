@@ -77,7 +77,7 @@ class RobotConfig:
     # Motor settings - matching your old code exactly
     pwm_frequency: int = 1000  # freq = 1000
     default_speed: int = 25    # gSliderSpeed = 25
-    motor3_compensate: int = 15  # motor3_compensate = 15
+    motor3_compensate: int = 0 # motor3_compensate = 15
     
     # Obstacle detection - matching your old code
     obstacle_threshold: float = 30.0  # OBSTACLE_THRESHOLD = 30.0
