@@ -571,32 +571,32 @@ class RobotController:
         
         # Direction configurations using class constants - EXACTLY MATCHING OLD CODE CONFIGURATIONS
         direction_configs = {
-            # From old code: goForwards
+            # From old code: "forward" - Motor1=0, Motor2=speed, Motor3=speed+compensate
             MovementDirection.FORWARD: {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: goBackwards  
+            # From old code: "backward" - Motor1=0, Motor2=speed, Motor3=speed+compensate
             MovementDirection.BACKWARD: {
                 "dirs": [self.HIGH, self.LOW, self.HIGH],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: turnLeft
+            # From old code: "turnLeft" - Motor1=speed, Motor2=speed, Motor3=speed+compensate
             MovementDirection.TURN_LEFT: {
                 "dirs": [self.HIGH, self.LOW, self.LOW],
                 "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: turnRight
+            # From old code: "turnRight" - Motor1=speed, Motor2=speed, Motor3=speed+compensate
             MovementDirection.TURN_RIGHT: {
                 "dirs": [self.LOW, self.HIGH, self.HIGH],
                 "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: moveLeft
+            # From old code: "moveLeft" - Motor1=speed*1.5, Motor2=speed, Motor3=0
             MovementDirection.MOVE_LEFT: {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [int(speed * 1.5), speed, 0]
             },
-            # From old code: moveRight
+            # From old code: "moveRight" - Motor1=speed*1.5, Motor2=speed, Motor3=speed+compensate
             MovementDirection.MOVE_RIGHT: {
                 "dirs": [self.LOW, self.LOW, self.HIGH],
                 "speeds": [int(speed * 1.5), speed, speed + self.config.motor3_compensate]
