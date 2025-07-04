@@ -1,3 +1,4 @@
+# robot_movement.py - Fixed version
 import asyncio
 import re
 import threading
@@ -38,10 +39,10 @@ class MovementDirection(Enum):
     """Movement direction enumeration"""
     FORWARD = "forward"
     BACKWARD = "backward"
-    TURN_LEFT = "turnLeft"
-    TURN_RIGHT = "turnRight"
-    MOVE_LEFT = "moveLeft"
-    MOVE_RIGHT = "moveRight"
+    TURN_LEFT = "turnleft"
+    TURN_RIGHT = "turnright"
+    MOVE_LEFT = "moveleft"
+    MOVE_RIGHT = "moveright"
     STOP = "stop"
 
 @dataclass
@@ -349,12 +350,13 @@ class RobotController:
         """Get current robot status"""
         return {
             "status": self.state.status.value,
-            "motor_speeds": {
+            "message": "Robot operational" if not self.state.obstacle_detected else "Obstacle detected",
+            "obstacle_detected": self.state.obstacle_detected,
+            "current_speeds": {
                 "motor1": self.state.motor1_speed,
                 "motor2": self.state.motor2_speed,
                 "motor3": self.state.motor3_speed
             },
-            "obstacle_detected": self.state.obstacle_detected,
             "last_distances": self.state.last_distances,
             "last_command": self.state.last_command,
             "uptime": self.state.uptime,
@@ -374,9 +376,26 @@ class RobotController:
     def move(self, direction: Union[str, MovementDirection], speed: Optional[int] = None, 
              duration_ms: Optional[int] = None) -> bool:
         """Move robot in specified direction"""
+        # Map frontend directions to backend directions
+        direction_map = {
+            "up": "forward",
+            "down": "backward", 
+            "left": "turnleft",
+            "right": "turnright",
+            "forward": "forward",
+            "backward": "backward",
+            "turnleft": "turnleft",
+            "turnright": "turnright",
+            "moveleft": "moveleft",
+            "moveright": "moveright",
+            "stop": "stop"
+        }
+        
         if isinstance(direction, str):
+            # Map the direction if needed
+            mapped_direction = direction_map.get(direction.lower(), direction.lower())
             try:
-                direction = MovementDirection(direction.lower())
+                direction = MovementDirection(mapped_direction)
             except ValueError:
                 logger.error(f"Invalid direction: {direction}")
                 return False
@@ -469,7 +488,7 @@ class RobotController:
             return True
         return False
     
-    def parse_command(self, command: str) -> Optional[Tuple[MovementDirection, Optional[int]]]:
+    def parse_command(self, command: str) -> Optional[Tuple[str, Optional[int]]]:
         """Parse natural language command to movement direction and duration"""
         command = command.lower().strip()
         
@@ -477,10 +496,10 @@ class RobotController:
             "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
             "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
             "stop": ["stop", "halt", "stand still", "brake", "freeze"],
-            "turnLeft": ["turn left", "rotate left", "spin left"],
-            "turnRight": ["turn right", "rotate right", "spin right"],
-            "moveLeft": ["move left", "strafe left", "slide left", "sidestep left"],
-            "moveRight": ["move right", "strafe right", "slide right", "sidestep right"]
+            "turnleft": ["turn left", "rotate left", "spin left"],
+            "turnright": ["turn right", "rotate right", "spin right"],
+            "moveleft": ["move left", "strafe left", "slide left", "sidestep left"],
+            "moveright": ["move right", "strafe right", "slide right", "sidestep right"]
         }
         
         time_patterns = {
@@ -493,7 +512,7 @@ class RobotController:
         direction = None
         for dir_key, phrases in directions.items():
             if any(phrase in command for phrase in phrases):
-                direction = MovementDirection(dir_key)
+                direction = dir_key
                 break
         
         # Find duration
@@ -532,14 +551,14 @@ class RobotController:
     async def chat(self, message: str, context: str = "") -> str:
         """Chat with AI model"""
         if not self.ai_chain:
-            return "AI model not available"
+            return "AI model not available. Please check Ollama installation."
         
         try:
             result = self.ai_chain.invoke({"context": context, "question": message})
             return str(result)
         except Exception as e:
             logger.error(f"AI chat error: {e}")
-            return "Error processing message"
+            return "Error processing message with AI model."
     
     def get_config(self) -> Dict:
         """Get current configuration"""
@@ -583,6 +602,46 @@ class RobotController:
                 logger.error(f"GPIO cleanup error: {e}")
         
         logger.info("Robot controller shutdown complete")
+
+
+# Global robot controller instance
+_robot_controller = None
+
+def get_robot_controller():
+    """Get or create the global robot controller instance"""
+    global _robot_controller
+    if _robot_controller is None:
+        _robot_controller = RobotController()
+    return _robot_controller
+
+# Public API functions for FastAPI backend compatibility
+def get_status() -> Dict:
+    """Get current robot status - called by FastAPI"""
+    return get_robot_controller().get_status()
+
+def move(direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
+    """Move robot in specified direction - called by FastAPI"""
+    return get_robot_controller().move(direction, speed, duration_ms)
+
+def stop() -> bool:
+    """Stop the robot - called by FastAPI"""
+    return get_robot_controller().stop()
+
+def parse_command(command: str) -> Optional[Tuple[str, Optional[int]]]:
+    """Parse natural language command - called by FastAPI"""
+    return get_robot_controller().parse_command(command)
+
+async def chat(message: str, context: str = "") -> str:
+    """Chat with AI model - called by FastAPI"""
+    return await get_robot_controller().chat(message, context)
+
+def emergency_stop() -> bool:
+    """Emergency stop - called by FastAPI"""
+    return get_robot_controller().emergency_stop()
+
+def reset_obstacle_detection() -> bool:
+    """Reset obstacle detection - called by FastAPI"""
+    return get_robot_controller().reset_obstacle_detection()
 
 # Factory function for easy initialization
 def create_robot(config: Optional[RobotConfig] = None) -> RobotController:

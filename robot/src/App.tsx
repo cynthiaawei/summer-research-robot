@@ -1,17 +1,21 @@
-import NavButtons from "./components/navbuttons";
-import TextButtons from "./components/textbutton";
-import Speech from "./components/speech";
-import Arrow_keys from "./components/arrow_keys";
-import {Routes, Route} from "react-router-dom"
-function App() {
-  return (
-    <Routes>
-      <Route path="/" element={<NavButtons />}/>
-      <Route path="/Text" element={<TextButtons />}/>
-      <Route path="/Speech" element={<Speech />}/>
-      <Route path="/Arrow_keys" element={<Arrow_keys/>}/>
-    </Routes>
-  );
-}
+import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import NavButtons from './components/navbuttons';
+import TextButton from './components/textbutton';
+import Speech from './components/speech';
+import ArrowKeys from './components/arrow_keys';
 
-export default App
+const App: React.FC = () => {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<NavButtons />} />
+        <Route path="/text" element={<TextButton />} />
+        <Route path="/speech" element={<Speech />} />
+        <Route path="/arrow-keys" element={<ArrowKeys />} />
+      </Routes>
+    </BrowserRouter>
+  );
+};
+
+export default App;

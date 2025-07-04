@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 
 const NavButtons = () => {
   const [selectedIndex, setSelectedIndex] = useState(-1);
-  const items = ["Speech", "Text", "Arrow_keys"];
+  const items = ["Speech", "Text", "Arrow Keys"];
   const navigate = useNavigate();
 
   const containerStyle = {
@@ -70,16 +70,19 @@ const NavButtons = () => {
   const handleItemClick = (index: number, item: string) => {
     setSelectedIndex(index);
     setTimeout(() => {
-      if (item === "Speech") navigate("/Speech");
-      if (item === "Text") navigate("/Text");
-      if (item === "Arrow_keys") navigate("/arrow_keys");
+      if (item === "Speech") navigate("/speech");
+      if (item === "Text") navigate("/text");
+      if (item === "Arrow Keys") navigate("/arrow-keys");
     }, 200);
   };
 
   return (
     <div style={containerStyle}>
       <div style={cardStyle}>
-        <h1 style={titleStyle}>Choose an Input Method</h1>
+        <h1 style={titleStyle}>Robot Control Center</h1>
+        <p style={{ color: '#718096', marginBottom: '2rem', fontSize: '1.1rem' }}>
+          Choose your preferred control method
+        </p>
         <ul style={listStyle}>
           {items.map((item, index) => (
             <li

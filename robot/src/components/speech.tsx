@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
-import axios, { isAxiosError } from 'axios';
 
 interface RobotStatus {
   status: string;
@@ -11,10 +9,11 @@ interface RobotStatus {
   uptime: number;
 }
 
-// Discriminated union for messages from your FastAPI WS endpoint
+// Discriminated union for messages from FastAPI WS endpoint
 type WSMessage =
   | { type: 'status_update'; data: RobotStatus }
   | { type: 'text_command_processed'; data: { message: string; success: boolean } }
+  | { type: 'text_command_result'; data: { message: string; success: boolean } }
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
   | { type: 'error'; data: { message: string } }
@@ -22,14 +21,12 @@ type WSMessage =
   | { type: 'pong' };
 
 const Speech: React.FC = () => {
-  const {
-    transcript,
-    finalTranscript,
-    listening,
-    resetTranscript,
-    browserSupportsSpeechRecognition
-  } = useSpeechRecognition();
-
+  const [transcript, setTranscript] = useState('');
+  const [finalTranscript, setFinalTranscript] = useState('');
+  const [listening, setListening] = useState(false);
+  const [recognition, setRecognition] = useState<any>(null);
+  const [browserSupported, setBrowserSupported] = useState(false);
+  
   const [response, setResponse] = useState<{ message: string; isError: boolean }>({ message: '', isError: false });
   const [status, setStatus] = useState<RobotStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,6 +36,62 @@ const Speech: React.FC = () => {
   // Use a ref so we always send on the latest socket
   const socketRef = useRef<WebSocket | null>(null);
 
+  // Initialize speech recognition
+  useEffect(() => {
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      setBrowserSupported(true);
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const recognitionInstance = new SpeechRecognition();
+      
+      recognitionInstance.continuous = false;
+      recognitionInstance.interimResults = true;
+      recognitionInstance.lang = 'en-US';
+
+      recognitionInstance.onstart = () => {
+        setListening(true);
+        setTranscript('');
+        setFinalTranscript('');
+        setResponse({ message: 'Listening...', isError: false });
+      };
+
+      recognitionInstance.onresult = (event: any) => {
+        let interimTranscript = '';
+        let finalTranscriptLocal = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscriptLocal += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        setTranscript(interimTranscript);
+        if (finalTranscriptLocal) {
+          setFinalTranscript(finalTranscriptLocal);
+        }
+      };
+
+      recognitionInstance.onend = () => {
+        setListening(false);
+        if (finalTranscript) {
+          handleSpeechCommand(finalTranscript);
+        }
+      };
+
+      recognitionInstance.onerror = (event: any) => {
+        setListening(false);
+        setResponse({ message: `Speech recognition error: ${event.error}`, isError: true });
+      };
+
+      setRecognition(recognitionInstance);
+    } else {
+      setBrowserSupported(false);
+    }
+  }, []);
+
+  // WebSocket connection
   useEffect(() => {
     let pingId: number;
     let reconnectTimer: number;
@@ -54,7 +107,7 @@ const Speech: React.FC = () => {
 
       ws.onopen = () => {
         console.log('WebSocket connected');
-        setResponse({ message: '', isError: false });
+        setResponse({ message: 'Connected to robot', isError: false });
         setRetryCount(0);
 
         // Heartbeat
@@ -80,24 +133,27 @@ const Speech: React.FC = () => {
             setStatus(msg.data);
             break;
           case 'text_command_processed':
+          case 'text_command_result':
             setResponse({ message: msg.data.message, isError: !msg.data.success });
+            setIsLoading(false);
             break;
           case 'direction_executed':
             setResponse({
               message: `Direction ${msg.data.direction} ${msg.data.success ? 'succeeded' : 'failed'}`,
               isError: !msg.data.success
             });
+            setIsLoading(false);
             break;
           case 'robot_stopped':
             setResponse({ message: msg.data.message, isError: false });
+            setIsLoading(false);
             break;
           case 'error':
             setResponse({ message: msg.data.message, isError: true });
+            setIsLoading(false);
             break;
           // ignore ping/pong
         }
-
-        setIsLoading(false);
       };
 
       ws.onerror = () => {
@@ -126,19 +182,16 @@ const Speech: React.FC = () => {
   // Fallback HTTP for natural-language commands
   const sendTextCommandViaHTTP = async (text: string) => {
     try {
-      const res = await axios.post<{ success: boolean; message: string }>(
-        `http://${window.location.hostname}:8000/api/text-command`,
-        { text }
-      );
-      setResponse({ message: res.data.message, isError: !res.data.success });
+      const response = await fetch(`http://${window.location.hostname}:8000/api/text-command`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      
+      const data = await response.json();
+      setResponse({ message: data.message, isError: !data.success });
     } catch (err) {
-      let msg = 'Error sending command';
-      if (isAxiosError(err)) {
-        // our FastAPI errors come back as { detail: string }
-        const data = err.response?.data as { detail?: string };
-        msg = data.detail ?? err.message;
-      }
-      setResponse({ message: msg, isError: true });
+      setResponse({ message: 'Error sending command', isError: true });
     } finally {
       setIsLoading(false);
     }
@@ -161,7 +214,11 @@ const Speech: React.FC = () => {
     if (isMove) {
       const dir = dirs.find(d => lower.includes(d));
       if (dir && socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'direction_command', data: { direction: dir } }));
+        const mappedDir = dir === 'up' ? 'forward' : dir === 'down' ? 'backward' : dir;
+        socketRef.current.send(JSON.stringify({ 
+          type: 'direction_command', 
+          data: { direction: mappedDir } 
+        }));
         setIsLoading(false);
         return;
       }
@@ -177,20 +234,39 @@ const Speech: React.FC = () => {
     sendTextCommandViaHTTP(lower);
   };
 
-  const handleSpeechEnd = () => {
-    if (finalTranscript) {
-      handleSpeechCommand(finalTranscript);
-      resetTranscript();
-    } else {
-      setIsLoading(false);
+  const startListening = () => {
+    if (recognition && !listening) {
+      setTranscript('');
+      setFinalTranscript('');
+      recognition.start();
     }
   };
 
-  if (!browserSupportsSpeechRecognition) {
+  const stopListening = () => {
+    if (recognition && listening) {
+      recognition.stop();
+    }
+  };
+
+  const resetTranscript = () => {
+    setTranscript('');
+    setFinalTranscript('');
+    setResponse({ message: '', isError: false });
+  };
+
+  if (!browserSupported) {
     return (
       <div style={styles.container}>
         <div style={styles.card}>
-          <span style={{ color: '#e53e3e' }}>Browser doesn’t support speech recognition</span>
+          <h2 style={styles.title}>Speech Control</h2>
+          <div style={styles.errorMessage}>
+            <span style={{ color: '#e53e3e', fontSize: '1.1rem' }}>
+              ❌ Your browser doesn't support speech recognition
+            </span>
+            <p style={{ marginTop: '1rem', color: '#718096' }}>
+              Please try using Chrome, Edge, or Safari for voice control features.
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -202,43 +278,48 @@ const Speech: React.FC = () => {
       <style>{`@keyframes pulse {0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}`}</style>
 
       <div style={styles.card}>
-        <p style={styles.status}>
-          Mic: {listening ? 'on' : 'off'} 
+        <h2 style={styles.title}>Voice Control</h2>
+        <p style={styles.subtitle}>Speak commands to control your robot</p>
+
+        <div style={styles.statusContainer}>
+          <span style={styles.statusText}>
+            Microphone: {listening ? 'Listening...' : 'Ready'} 
+          </span>
           <span
             style={{
               ...styles.indicator,
               background: listening ? '#48bb78' : '#e53e3e'
             }}
           />
-        </p>
+        </div>
 
-        <button
-          onClick={() => {
-            if (!listening) {
-              SpeechRecognition.startListening({ continuous: true, interimResults: true });
-            } else {
-              SpeechRecognition.stopListening();
-              handleSpeechEnd();
-            }
-          }}
-          style={styles.toggleBtn}
-        >
-          {listening ? 'Stop Listening' : 'Start Listening'}
-        </button>
+        <div style={styles.buttonContainer}>
+          <button
+            onClick={listening ? stopListening : startListening}
+            style={{
+              ...styles.toggleBtn,
+              background: listening ? '#f56565' : '#48bb78'
+            }}
+            disabled={isLoading}
+          >
+            {listening ? '🎤 Stop Listening' : '🎤 Start Listening'}
+          </button>
 
-        <button
-          onClick={() => {
-            resetTranscript();
-            setResponse({ message: '', isError: false });
-          }}
-          style={styles.resetBtn}
-        >
-          Reset
-        </button>
+          <button
+            onClick={resetTranscript}
+            style={styles.resetBtn}
+          >
+            🔄 Reset
+          </button>
+        </div>
 
-        <div style={styles.transcript}>{transcript || 'Say something to control the robot...'}</div>
+        <div style={styles.transcript}>
+          {transcript || finalTranscript || 'Say something to control the robot...'}
+          {transcript && <span style={{ color: '#a0aec0' }}> {transcript}</span>}
+        </div>
 
-        {isLoading && <div style={styles.response}>Processing command…</div>}
+        {isLoading && <div style={styles.loadingMessage}>Processing command…</div>}
+        
         {!isLoading && response.message && (
           <div
             style={{
@@ -247,21 +328,37 @@ const Speech: React.FC = () => {
               borderColor: response.isError ? '#f87171' : '#34d399'
             }}
           >
-            {response.message}
+            <strong>{response.isError ? 'Error:' : 'Response:'}</strong> {response.message}
           </div>
         )}
 
         {status && (
           <div style={styles.statusCard}>
-            <h3>Robot Status</h3>
-            <p><strong>Status:</strong> {status.status}</p>
-            <p><strong>Message:</strong> {status.message}</p>
-            <p><strong>Obstacle:</strong> {status.obstacle_detected ? 'Yes' : 'No'}</p>
-            <p><strong>Speeds:</strong> {JSON.stringify(status.current_speeds)}</p>
-            <p><strong>Last Command:</strong> {status.last_command}</p>
-            <p><strong>Uptime:</strong> {status.uptime.toFixed(1)}s</p>
+            <h3 style={styles.statusTitle}>Robot Status</h3>
+            <div style={styles.statusGrid}>
+              <div><strong>Status:</strong> <span style={{
+                color: status.obstacle_detected ? '#e53e3e' : 
+                      status.status === 'moving' ? '#38a169' : '#718096'
+              }}>{status.status}</span></div>
+              <div><strong>Message:</strong> {status.message}</div>
+              <div><strong>Obstacle:</strong> <span style={{
+                color: status.obstacle_detected ? '#e53e3e' : '#38a169'
+              }}>{status.obstacle_detected ? 'Yes' : 'No'}</span></div>
+              <div><strong>Last Command:</strong> {status.last_command || 'None'}</div>
+              <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
+            </div>
           </div>
         )}
+
+        <div style={styles.examples}>
+          <h4 style={styles.examplesTitle}>Example Voice Commands:</h4>
+          <ul style={styles.examplesList}>
+            <li>"Go forward"</li>
+            <li>"Turn left"</li>
+            <li>"Move backward 2 seconds"</li>
+            <li>"Stop"</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
@@ -286,54 +383,128 @@ const styles = {
     maxWidth: '600px',
     width: '100%'
   },
-  status: { fontSize: '1.2rem', marginBottom: '1rem' },
+  title: {
+    fontSize: '2rem',
+    fontWeight: '700',
+    color: '#2d3748',
+    marginBottom: '0.5rem'
+  },
+  subtitle: {
+    color: '#718096',
+    marginBottom: '2rem',
+    fontSize: '1.1rem'
+  },
+  statusContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '1.5rem'
+  },
+  statusText: { 
+    fontSize: '1.1rem',
+    marginRight: '0.5rem',
+    color: '#4a5568'
+  },
   indicator: {
     display: 'inline-block',
     width: 12,
     height: 12,
     borderRadius: '50%',
-    marginLeft: 8,
     animation: 'pulse 2s infinite'
+  },
+  buttonContainer: {
+    display: 'flex',
+    gap: '1rem',
+    justifyContent: 'center',
+    marginBottom: '1.5rem',
+    flexWrap: 'wrap' as const
   },
   toggleBtn: {
     padding: '1rem 2rem',
     borderRadius: 12,
     border: 'none',
-    margin: '0.5rem',
     cursor: 'pointer',
-    background: '#48bb78',
-    color: 'white'
+    color: 'white',
+    fontSize: '1rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   resetBtn: {
     padding: '1rem 2rem',
     borderRadius: 12,
     border: 'none',
-    margin: '0.5rem',
     cursor: 'pointer',
     background: '#ed8936',
-    color: 'white'
+    color: 'white',
+    fontSize: '1rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   transcript: {
     background: '#f7fafc',
     borderRadius: 12,
-    padding: '1rem',
+    padding: '1.5rem',
     minHeight: 80,
     border: '2px solid #e2e8f0',
-    margin: '1rem 0'
+    margin: '1rem 0',
+    fontSize: '1.1rem',
+    lineHeight: '1.5',
+    color: '#2d3748'
+  },
+  loadingMessage: {
+    color: '#4a5568',
+    fontStyle: 'italic',
+    marginBottom: '1rem'
   },
   response: {
     borderRadius: 12,
     padding: '1rem',
     border: '2px solid',
-    marginBottom: '1rem'
+    marginBottom: '1rem',
+    textAlign: 'left' as const
   },
   statusCard: {
-    background: '#ffffff',
+    background: '#f8fafc',
     borderRadius: 12,
     padding: '1rem',
     border: '2px solid #e2e8f0',
     textAlign: 'left' as const,
     marginTop: '1rem'
+  },
+  statusTitle: {
+    marginTop: 0,
+    marginBottom: '0.5rem',
+    fontSize: '1.1rem',
+    color: '#2d3748'
+  },
+  statusGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+    fontSize: '0.9rem'
+  },
+  examples: {
+    marginTop: '2rem',
+    padding: '1rem',
+    background: '#f0f4f8',
+    borderRadius: 12,
+    textAlign: 'left' as const
+  },
+  examplesTitle: {
+    marginTop: 0,
+    marginBottom: '0.5rem',
+    fontSize: '1rem',
+    color: '#4a5568'
+  },
+  examplesList: {
+    margin: 0,
+    paddingLeft: '1.5rem',
+    fontSize: '0.9rem',
+    color: '#718096'
+  },
+  errorMessage: {
+    textAlign: 'center' as const,
+    padding: '2rem'
   }
 };
 

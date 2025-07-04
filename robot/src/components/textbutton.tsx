@@ -14,6 +14,7 @@ interface RobotStatus {
 type WSMessage =
   | { type: 'status_update'; data: RobotStatus }
   | { type: 'text_command_processed'; data: { message: string; success: boolean } }
+  | { type: 'text_command_result'; data: { message: string; success: boolean } }
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
   | { type: 'error'; data: { message: string } }
@@ -46,7 +47,7 @@ const TextButton: React.FC = () => {
 
       ws.onopen = () => {
         console.log('WS connected');
-        setResponse({ message: '', isError: false });
+        setResponse({ message: 'Connected to robot', isError: false });
         setRetryCount(0);
 
         // keep-alive ping every 30s
@@ -72,6 +73,7 @@ const TextButton: React.FC = () => {
             setStatus(msg.data);
             break;
           case 'text_command_processed':
+          case 'text_command_result':
             setResponse({ message: msg.data.message, isError: !msg.data.success });
             break;
           case 'direction_executed':
@@ -149,9 +151,9 @@ const TextButton: React.FC = () => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({
         type: 'text_command',
-        data: { message: cmd }    // your backend will look for `data.text` or `data.message`
+        data: { text: cmd }
       }));
-      setIsLoading(false);
+      // Don't set loading to false here, wait for response
       return;
     }
 
@@ -159,8 +161,8 @@ const TextButton: React.FC = () => {
     sendTextCommandViaHTTP(cmd);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent, action: 'submit') => {
-    if (e.key === 'Enter' && action === 'submit') {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
       e.preventDefault();
       handleSubmit();
     }
@@ -175,24 +177,31 @@ const TextButton: React.FC = () => {
       `}</style>
 
       <div style={styles.card}>
+        <h2 style={styles.title}>Text Command Control</h2>
+        <p style={styles.subtitle}>Enter natural language commands to control your robot</p>
+        
         <label htmlFor="cmd" style={styles.label}>Command</label>
         <input
           id="cmd"
           type="text"
           value={text}
           onChange={e => setText(e.target.value)}
-          onKeyDown={e => handleKeyDown(e, 'submit')}
-          placeholder="e.g. go forward 2 seconds"
+          onKeyDown={handleKeyDown}
+          placeholder="e.g. go forward 2 seconds, turn left, stop"
           style={styles.input}
+          disabled={isLoading}
         />
 
         <button
           onClick={handleSubmit}
-          onKeyDown={e => handleKeyDown(e, 'submit')}
-          disabled={isLoading}
-          style={styles.button}
+          disabled={isLoading || !text.trim()}
+          style={{
+            ...styles.button,
+            background: isLoading || !text.trim() ? '#a0aec0' : '#48bb78',
+            cursor: isLoading || !text.trim() ? 'not-allowed' : 'pointer'
+          }}
         >
-          {isLoading ? 'Sending…' : 'Submit'}
+          {isLoading ? 'Sending…' : 'Send Command'}
         </button>
 
         {response.message && (
@@ -201,21 +210,37 @@ const TextButton: React.FC = () => {
             background: response.isError ? '#fee2e2' : '#d1fae5',
             borderColor: response.isError ? '#f87171' : '#34d399'
           }}>
-            {response.message}
+            <strong>{response.isError ? 'Error:' : 'Response:'}</strong> {response.message}
           </div>
         )}
 
         {status && (
           <div style={styles.statusCard}>
-            <h3>Robot Status</h3>
-            <p><strong>Status:</strong> {status.status}</p>
-            <p><strong>Message:</strong> {status.message}</p>
-            <p><strong>Obstacle:</strong> {status.obstacle_detected ? 'Yes' : 'No'}</p>
-            <p><strong>Speeds:</strong> {JSON.stringify(status.current_speeds)}</p>
-            <p><strong>Last Cmd:</strong> {status.last_command}</p>
-            <p><strong>Uptime:</strong> {status.uptime.toFixed(1)}s</p>
+            <h3 style={styles.statusTitle}>Robot Status</h3>
+            <div style={styles.statusGrid}>
+              <div><strong>Status:</strong> <span style={{
+                color: status.obstacle_detected ? '#e53e3e' : 
+                      status.status === 'moving' ? '#38a169' : '#718096'
+              }}>{status.status}</span></div>
+              <div><strong>Message:</strong> {status.message}</div>
+              <div><strong>Obstacle:</strong> <span style={{
+                color: status.obstacle_detected ? '#e53e3e' : '#38a169'
+              }}>{status.obstacle_detected ? 'Yes' : 'No'}</span></div>
+              <div><strong>Last Cmd:</strong> {status.last_command || 'None'}</div>
+              <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
+            </div>
           </div>
         )}
+
+        <div style={styles.examples}>
+          <h4 style={styles.examplesTitle}>Example Commands:</h4>
+          <ul style={styles.examplesList}>
+            <li>"go forward 3 seconds"</li>
+            <li>"turn left"</li>
+            <li>"move backward 1 second"</li>
+            <li>"stop"</li>
+          </ul>
+        </div>
       </div>
     </div>
   );
@@ -240,11 +265,23 @@ const styles = {
     width: '100%',
     textAlign: 'center' as const
   },
+  title: {
+    fontSize: '2rem',
+    fontWeight: '700',
+    color: '#2d3748',
+    marginBottom: '0.5rem'
+  },
+  subtitle: {
+    color: '#718096',
+    marginBottom: '2rem',
+    fontSize: '1.1rem'
+  },
   label: {
     fontSize: '1.2rem',
     fontWeight: 600,
     marginBottom: '0.5rem',
-    display: 'block'
+    display: 'block',
+    textAlign: 'left' as const
   },
   input: {
     width: '100%',
@@ -253,29 +290,66 @@ const styles = {
     borderRadius: 12,
     border: '2px solid #e2e8f0',
     marginBottom: '1rem',
-    boxSizing: 'border-box' as const
+    boxSizing: 'border-box' as const,
+    transition: 'all 0.3s ease'
   },
   button: {
-    padding: '0.75rem 1.5rem',
+    padding: '0.75rem 2rem',
     borderRadius: 12,
     border: 'none',
-    background: '#48bb78',
     color: 'white',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    fontSize: '1.1rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease',
+    marginBottom: '1rem'
   },
   response: {
     marginTop: '1rem',
     padding: '1rem',
     border: '2px solid',
     borderRadius: 12,
-    fontSize: '0.9rem'
+    fontSize: '0.9rem',
+    textAlign: 'left' as const
   },
   statusCard: {
     marginTop: '1.5rem',
     padding: '1rem',
     border: '2px solid #e2e8f0',
     borderRadius: 12,
+    textAlign: 'left' as const,
+    background: '#f8fafc'
+  },
+  statusTitle: {
+    marginTop: 0,
+    marginBottom: '0.5rem',
+    fontSize: '1.1rem',
+    color: '#2d3748'
+  },
+  statusGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '0.5rem',
+    fontSize: '0.9rem'
+  },
+  examples: {
+    marginTop: '2rem',
+    padding: '1rem',
+    background: '#f0f4f8',
+    borderRadius: 12,
     textAlign: 'left' as const
+  },
+  examplesTitle: {
+    marginTop: 0,
+    marginBottom: '0.5rem',
+    fontSize: '1rem',
+    color: '#4a5568'
+  },
+  examplesList: {
+    margin: 0,
+    paddingLeft: '1.5rem',
+    fontSize: '0.9rem',
+    color: '#718096'
   }
 };
 

@@ -51,6 +51,7 @@ class RobotStatusResponse(BaseModel):
 
 # Global state
 robot_movement_available = True
+background_task_created = False
 
 # Check if robot_movement is available
 try:
@@ -82,6 +83,9 @@ class ConnectionManager:
             logger.error(f"Error sending personal message: {e}")
 
     async def broadcast(self, message: str):
+        if not self.active_connections:
+            return
+            
         disconnected = []
         for connection in self.active_connections:
             try:
@@ -100,37 +104,48 @@ async def broadcast_status():
     """Broadcast robot status to all connected clients"""
     while True:
         try:
-            if robot_movement_available:
-                status = robot_movement.get_status()
-                await manager.broadcast(json.dumps({
-                    "type": "status_update",
-                    "data": status
-                }))
-            else:
-                await manager.broadcast(json.dumps({
-                    "type": "status_update",
-                    "data": {
-                        "status": "error",
-                        "message": "Robot movement module not available",
-                        "obstacle_detected": False,
-                        "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
-                        "last_distances": [],
-                        "last_command": "",
-                        "uptime": 0.0,
-                        "gpio_available": False
-                    }
-                }))
+            if len(manager.active_connections) > 0:  # Only broadcast if there are connections
+                if robot_movement_available:
+                    status = robot_movement.get_status()
+                    await manager.broadcast(json.dumps({
+                        "type": "status_update",
+                        "data": status
+                    }))
+                else:
+                    await manager.broadcast(json.dumps({
+                        "type": "status_update",
+                        "data": {
+                            "status": "error",
+                            "message": "Robot movement module not available",
+                            "obstacle_detected": False,
+                            "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
+                            "last_distances": [],
+                            "last_command": "",
+                            "uptime": 0.0,
+                            "gpio_available": False
+                        }
+                    }))
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Error in status broadcaster: {e}")
             await asyncio.sleep(1)
 
-asyncio.create_task(broadcast_status())
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on app startup"""
+    global background_task_created
+    if not background_task_created:
+        asyncio.create_task(broadcast_status())
+        background_task_created = True
+        logger.info("Background status broadcaster started")
 
 @app.get("/")
 async def read_root():
     """Serve the React frontend"""
-    return FileResponse("frontend/build/index.html")
+    try:
+        return FileResponse("frontend/build/index.html")
+    except FileNotFoundError:
+        return {"message": "Frontend build not found. Please build your React app first."}
 
 @app.get("/api/status")
 async def get_status():
@@ -138,7 +153,8 @@ async def get_status():
     if not robot_movement_available:
         raise HTTPException(status_code=503, detail="Robot movement module not available")
     try:
-        return RobotStatusResponse(**robot_movement.get_status())
+        status_data = robot_movement.get_status()
+        return RobotStatusResponse(**status_data)
     except Exception as e:
         logger.error(f"Error getting status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -233,11 +249,6 @@ async def stop_robot():
         logger.error(f"Error stopping robot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/speech/start")
-async def start_speech_recognition():
-    """Signal client-side speech recognition"""
-    return {"success": True, "message": "Speech recognition handled client-side"}
-
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time communication"""
@@ -246,37 +257,43 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
+            try:
+                message = json.loads(data)
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "data": {"message": "Invalid JSON format"}
+                }))
+                continue
             
             message_type = message.get("type")
             payload = message.get("data", {})
             
-            if message_type == "direction_command":
-                direction = payload.get("direction", "").lower()
-                if direction:
-                    try:
+            if not robot_movement_available:
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "data": {"message": "Robot movement module not available"}
+                }))
+                continue
+            
+            try:
+                if message_type == "direction_command":
+                    direction = payload.get("direction", "").lower()
+                    if direction:
                         success = robot_movement.move(direction)
                         await manager.broadcast(json.dumps({
                             "type": "direction_executed",
                             "data": {"direction": direction, "success": success}
                         }))
-                    except ValueError as e:
-                        logger.error(f"Invalid direction: {e}")
+                    else:
                         await websocket.send_text(json.dumps({
                             "type": "error",
-                            "data": {"message": f"Invalid direction: {direction}"}
+                            "data": {"message": "No direction specified"}
                         }))
-                    except Exception as e:
-                        logger.error(f"Error processing direction command: {e}")
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "data": {"message": f"Error processing direction: {str(e)}"}
-                        }))
-            
-            elif message_type == "text_command":
-                text = payload.get("text", "")
-                if text:
-                    try:
+                
+                elif message_type == "text_command":
+                    text = payload.get("text", "")
+                    if text:
                         parsed = robot_movement.parse_command(text)
                         if parsed:
                             direction, duration = parsed
@@ -285,54 +302,86 @@ async def websocket_endpoint(websocket: WebSocket):
                         else:
                             response = await robot_movement.chat(text)
                             success = True
+                        
                         await manager.broadcast(json.dumps({
                             "type": "text_command_result",
                             "data": {"text": text, "success": success, "message": response}
                         }))
-                    except Exception as e:
-                        logger.error(f"Error processing text command: {e}")
+                    else:
                         await websocket.send_text(json.dumps({
                             "type": "error",
-                            "data": {"message": f"Error processing text command: {str(e)}"}
+                            "data": {"message": "No text specified"}
                         }))
-            
-            elif message_type == "stop_command":
-                try:
+                
+                elif message_type == "stop_command":
                     success = robot_movement.stop()
                     await manager.broadcast(json.dumps({
                         "type": "robot_stopped",
                         "data": {"message": "Robot stopped via WebSocket"}
                     }))
-                except Exception as e:
-                    logger.error(f"Error stopping robot: {e}")
+                
+                elif message_type == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                
+                else:
                     await websocket.send_text(json.dumps({
                         "type": "error",
-                        "data": {"message": f"Error stopping robot: {str(e)}"}
+                        "data": {"message": f"Unknown message type: {message_type}"}
                     }))
-            
-            elif message_type == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
+                    
+            except ValueError as e:
+                logger.error(f"Invalid command: {e}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "data": {"message": f"Invalid command: {str(e)}"}
+                }))
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "data": {"message": f"Error processing command: {str(e)}"}
+                }))
     
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        logger.info("Client disconnected from WebSocket")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
+# Health check endpoint
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "robot_available": robot_movement_available,
+        "active_connections": len(manager.active_connections)
+    }
+
 # Serve static files (React frontend)
-app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+try:
+    app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
+except Exception as e:
+    logger.warning(f"Could not mount static files: {e}")
 
 # Catch-all route for React Router
 @app.get("/{path:path}")
 async def catch_all(path: str):
     """Catch-all route for React Router"""
-    return FileResponse("frontend/build/index.html")
+    try:
+        return FileResponse("frontend/build/index.html")
+    except FileNotFoundError:
+        return {"message": "Frontend build not found. Please build your React app first."}
 
 if __name__ == "__main__":
+    # Create frontend directory if it doesn't exist
     os.makedirs("frontend/build", exist_ok=True)
+    
     print("🚀 Starting Robot Control Web Server...")
     print("📡 Server will be available at: http://localhost:8000")
     print("🤖 Robot control interface ready!")
+    print(f"🔧 Robot movement module: {'Available' if robot_movement_available else 'Not Available (Simulation Mode)'}")
     
     uvicorn.run(
         app,
