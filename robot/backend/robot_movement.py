@@ -1,4 +1,4 @@
-# robot_movement.py - Fixed version with proper threading, error handling, and state management
+# robot_movement.py - Complete fixed version with proper threading, error handling, and state management
 import asyncio
 import re
 import threading
@@ -57,30 +57,30 @@ class MovementDirection(Enum):
 
 @dataclass
 class RobotConfig:
-    """Robot configuration dataclass"""
-    # Motor pins
-    motor1_speed: int = 38
-    motor1_dir: int = 40
-    motor2_speed: int = 32
-    motor2_dir: int = 36
-    motor3_speed: int = 16
-    motor3_dir: int = 26
+    """Robot configuration dataclass with proper motor compensation"""
+    # Motor pins - matching your old code exactly
+    motor1_speed: int = 38  # Motor1_Speed
+    motor1_dir: int = 40    # Motor1_Dir
+    motor2_speed: int = 32  # Motor2_Speed
+    motor2_dir: int = 36    # Motor2_Dir
+    motor3_speed: int = 16  # Motor3_Speed
+    motor3_dir: int = 26    # Motor3_Dir
     
-    # Ultrasonic sensor pins
-    echo1: int = 31
-    echo2: int = 29
-    echo3: int = 22
-    trig1: int = 11
-    trig2: int = 13
-    trig3: int = 15
+    # Ultrasonic sensor pins - matching your old code exactly
+    echo1: int = 31  # Echo1
+    echo2: int = 29  # Echo2
+    echo3: int = 22  # Echo3
+    trig1: int = 11  # Trig1
+    trig2: int = 13  # Trig2
+    trig3: int = 15  # Trig3
     
-    # Motor settings
-    pwm_frequency: int = 1000
-    default_speed: int = 25
-    motor3_compensate: int = 15
+    # Motor settings - matching your old code exactly
+    pwm_frequency: int = 1000  # freq = 1000
+    default_speed: int = 25    # gSliderSpeed = 25
+    motor3_compensate: int = 15  # motor3_compensate = 15
     
-    # Obstacle detection
-    obstacle_threshold: float = 30.0
+    # Obstacle detection - matching your old code
+    obstacle_threshold: float = 30.0  # OBSTACLE_THRESHOLD = 30.0
     sensor_timeout: float = 0.5
     obstacle_clear_threshold: float = 50.0  # Distance to clear obstacle status
     
@@ -90,9 +90,9 @@ class RobotConfig:
 @dataclass
 class RobotState:
     """Robot state dataclass with proper initialization"""
-    motor1_speed: int = 0
-    motor2_speed: int = 0
-    motor3_speed: int = 0
+    motor1_speed: int = 0  # gCurSpeed1
+    motor2_speed: int = 0  # gCurSpeed2
+    motor3_speed: int = 0  # gCurSpeed3
     status: RobotStatus = RobotStatus.IDLE
     obstacle_detected: bool = False
     last_distances: List[float] = field(default_factory=list)
@@ -140,7 +140,7 @@ class RobotController:
         logger.info("Robot controller initialized successfully")
     
     def _setup_gpio(self):
-        """Setup GPIO pins and PWM with proper error handling"""
+        """Setup GPIO pins and PWM with proper error handling - matching old code structure"""
         if not GPIO_AVAILABLE:
             logger.warning("GPIO not available - running in simulation mode")
             self.gpio_initialized = False
@@ -148,39 +148,26 @@ class RobotController:
         
         pwm_objects = []
         try:
-            # GPIO Setup
+            # GPIO Setup - exactly like old code
             GPIO.setmode(GPIO.BOARD)
             
-            # Setup ultrasonic sensors
-            sensor_pins = [
-                (self.config.echo1, GPIO.IN),
-                (self.config.echo2, GPIO.IN),
-                (self.config.echo3, GPIO.IN),
-                (self.config.trig1, GPIO.OUT, GPIO.LOW),
-                (self.config.trig2, GPIO.OUT, GPIO.LOW),
-                (self.config.trig3, GPIO.OUT, GPIO.LOW)
-            ]
+            # Setup ultrasonic sensors - exactly like old code
+            GPIO.setup(self.config.echo1, GPIO.IN)
+            GPIO.setup(self.config.echo2, GPIO.IN)
+            GPIO.setup(self.config.echo3, GPIO.IN)
+            GPIO.setup(self.config.trig1, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.trig2, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.trig3, GPIO.OUT, initial=GPIO.LOW)
             
-            for pin_config in sensor_pins:
-                if len(pin_config) == 3:
-                    GPIO.setup(pin_config[0], pin_config[1], initial=pin_config[2])
-                else:
-                    GPIO.setup(pin_config[0], pin_config[1])
+            # Setup motors - exactly like old code
+            GPIO.setup(self.config.motor1_speed, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.motor1_dir, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.motor2_speed, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.motor2_dir, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.motor3_speed, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.motor3_dir, GPIO.OUT, initial=GPIO.LOW)
             
-            # Setup motors
-            motor_pins = [
-                (self.config.motor1_speed, GPIO.OUT, GPIO.LOW),
-                (self.config.motor1_dir, GPIO.OUT, GPIO.LOW),
-                (self.config.motor2_speed, GPIO.OUT, GPIO.LOW),
-                (self.config.motor2_dir, GPIO.OUT, GPIO.LOW),
-                (self.config.motor3_speed, GPIO.OUT, GPIO.LOW),
-                (self.config.motor3_dir, GPIO.OUT, GPIO.LOW)
-            ]
-            
-            for pin, mode, initial in motor_pins:
-                GPIO.setup(pin, mode, initial=initial)
-            
-            # Setup PWM with proper cleanup tracking
+            # Setup PWM with proper cleanup tracking - exactly like old code
             self.motor1_pwm = GPIO.PWM(self.config.motor1_speed, self.config.pwm_frequency)
             pwm_objects.append(self.motor1_pwm)
             
@@ -190,9 +177,10 @@ class RobotController:
             self.motor3_pwm = GPIO.PWM(self.config.motor3_speed, self.config.pwm_frequency)
             pwm_objects.append(self.motor3_pwm)
             
-            # Start all PWM
-            for pwm in pwm_objects:
-                pwm.start(0)
+            # Start all PWM - exactly like old code
+            self.motor1_pwm.start(0)
+            self.motor2_pwm.start(0)
+            self.motor3_pwm.start(0)
             
             self.gpio_initialized = True
             logger.info("GPIO initialized successfully")
@@ -214,13 +202,14 @@ class RobotController:
             self.gpio_initialized = False
     
     def _setup_ai(self):
-        """Setup AI model for conversation"""
+        """Setup AI model for conversation - matching old code AI setup"""
         if not AI_AVAILABLE:
             logger.warning("AI not available - conversational features disabled")
             self.ai_chain = None
             return
         
         try:
+            # Exactly like old code AI setup
             template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
             model = OllamaLLM(model=self.config.ai_model)
             prompt = ChatPromptTemplate.from_template(template)
@@ -340,16 +329,16 @@ class RobotController:
         ])
     
     def _get_distance(self, trig_pin: int, echo_pin: int) -> float:
-        """Get distance from a single ultrasonic sensor with improved error handling"""
+        """Get distance from a single ultrasonic sensor - matching old code get_distance function"""
         if not self.gpio_initialized:
             return 100.0  # Simulation mode - return safe distance
         
         try:
-            # Clean state
+            # Clean state - exactly like old code
             GPIO.output(trig_pin, False)
             time.sleep(0.000002)
             
-            # Send trigger pulse
+            # Send trigger pulse - exactly like old code
             GPIO.output(trig_pin, True)
             time.sleep(0.00001)
             GPIO.output(trig_pin, False)
@@ -368,12 +357,12 @@ class RobotController:
                     return DEFAULT_SENSOR_ERROR_DISTANCE
             pulse_end = time.time()
             
-            # Calculate distance using proper physics
+            # Calculate distance using proper physics - exactly like old code
             pulse_duration = pulse_end - pulse_start
-            distance = pulse_duration * DISTANCE_CALCULATION_FACTOR
+            distance = pulse_duration * 17150  # Same calculation as old code
             distance = round(distance, 2)
             
-            # Validate distance range
+            # Validate distance range - exactly like old code
             if MIN_VALID_DISTANCE_CM <= distance <= MAX_VALID_DISTANCE_CM:
                 return distance
             else:
@@ -417,7 +406,7 @@ class RobotController:
         return sensor_readings
     
     def _change_speeds_smooth(self, new_speeds: Tuple[int, int, int]):
-        """Smoothly change motor speeds with proper thread safety"""
+        """Smoothly change motor speeds with proper thread safety - enhanced version of old changeSpeedSmooth"""
         if not self.gpio_initialized:
             with self.state_lock:
                 self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed = new_speeds
@@ -432,14 +421,14 @@ class RobotController:
                 
                 current_speeds = (self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed)
             
-            # Calculate steps for smooth transition
+            # Calculate steps for smooth transition - exactly like old code
             speed_diffs = [abs(new_speeds[i] - current_speeds[i]) for i in range(3)]
             steps = max(speed_diffs) if speed_diffs else 0
             
             if steps < 1:
                 steps = 1  # Minimum one step to avoid division by zero
             
-            # Perform smooth transition
+            # Perform smooth transition - exactly like old code logic
             for step in range(steps + 1):
                 # Check for interruption during transition
                 with self.state_lock:
@@ -447,7 +436,7 @@ class RobotController:
                         self._stop_motors_immediate()
                         return
                 
-                progress = step / steps
+                progress = step / steps if steps > 0 else 1
                 speeds = [
                     int(current_speeds[i] + (new_speeds[i] - current_speeds[i]) * progress)
                     for i in range(3)
@@ -456,7 +445,7 @@ class RobotController:
                 # Clamp speeds to valid range
                 speeds = [max(0, min(100, speed)) for speed in speeds]
                 
-                # Apply PWM safely
+                # Apply PWM safely - exactly like old code
                 try:
                     if self.motor1_pwm:
                         self.motor1_pwm.ChangeDutyCycle(speeds[0])
@@ -469,7 +458,7 @@ class RobotController:
                     self._stop_motors_immediate()
                     return
                 
-                time.sleep(SMOOTH_SPEED_STEP_DELAY)
+                time.sleep(SMOOTH_SPEED_STEP_DELAY)  # Same as old code 0.01
             
             # Update state atomically if successful
             with self.state_lock:
@@ -479,7 +468,7 @@ class RobotController:
                     self._stop_motors_immediate()
     
     def _stop_motors_immediate(self):
-        """Immediately stop all motors (call within appropriate lock)"""
+        """Immediately stop all motors (call within appropriate lock) - like old stopNoTime"""
         try:
             if self.gpio_initialized and all([self.motor1_pwm, self.motor2_pwm, self.motor3_pwm]):
                 self.motor1_pwm.ChangeDutyCycle(0)
@@ -535,7 +524,7 @@ class RobotController:
     
     def move(self, direction: Union[str, MovementDirection], speed: Optional[int] = None, 
              duration_ms: Optional[int] = None) -> bool:
-        """Move robot in specified direction with proper validation"""
+        """Move robot in specified direction with proper validation - using exact old code motor configurations"""
         # Map frontend directions to backend directions
         direction_map = {
             "up": "forward",
@@ -580,28 +569,34 @@ class RobotController:
                     if min_distance > self.config.obstacle_clear_threshold:
                         self._update_obstacle_state(False)
         
-        # Direction configurations using class constants
+        # Direction configurations using class constants - EXACTLY MATCHING OLD CODE CONFIGURATIONS
         direction_configs = {
+            # From old code: goForwards
             MovementDirection.FORWARD: {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
+            # From old code: goBackwards  
             MovementDirection.BACKWARD: {
                 "dirs": [self.HIGH, self.LOW, self.HIGH],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
+            # From old code: turnLeft
             MovementDirection.TURN_LEFT: {
                 "dirs": [self.HIGH, self.LOW, self.LOW],
                 "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
+            # From old code: turnRight
             MovementDirection.TURN_RIGHT: {
                 "dirs": [self.LOW, self.HIGH, self.HIGH],
                 "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
+            # From old code: moveLeft
             MovementDirection.MOVE_LEFT: {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [int(speed * 1.5), speed, 0]
             },
+            # From old code: moveRight
             MovementDirection.MOVE_RIGHT: {
                 "dirs": [self.LOW, self.LOW, self.HIGH],
                 "speeds": [int(speed * 1.5), speed, speed + self.config.motor3_compensate]
@@ -614,7 +609,7 @@ class RobotController:
         
         config = direction_configs[direction]
         
-        # Set motor directions safely
+        # Set motor directions safely - exactly like old code
         if self.gpio_initialized:
             try:
                 GPIO.output(self.config.motor1_dir, config["dirs"][0])
@@ -641,7 +636,7 @@ class RobotController:
         return self.move(MovementDirection.STOP)
     
     def emergency_stop(self) -> bool:
-        """Emergency stop with state reset"""
+        """Emergency stop with state reset - like old emergency_stop"""
         logger.warning("Emergency stop activated")
         
         with self.movement_lock:
@@ -666,10 +661,20 @@ class RobotController:
         logger.warning(f"Invalid speed value: {speed}. Must be between 0 and 100.")
         return False
     
+    def set_motor_compensation(self, compensation: int) -> bool:
+        """Set motor 3 compensation value"""
+        if 0 <= compensation <= 50:
+            self.config.motor3_compensate = compensation
+            logger.info(f"Motor 3 compensation set to {compensation}")
+            return True
+        logger.warning(f"Invalid compensation value: {compensation}. Must be between 0 and 50.")
+        return False
+    
     def parse_command(self, command: str) -> Optional[Tuple[str, Optional[int]]]:
-        """Parse natural language command to movement direction and duration"""
+        """Parse natural language command to movement direction and duration - matching old code logic"""
         command = command.lower().strip()
         
+        # Movement direction mappings - exactly like old code
         directions = {
             "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
             "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
@@ -680,6 +685,7 @@ class RobotController:
             "moveright": ["move right", "strafe right", "slide right", "sidestep right"]
         }
         
+        # Time patterns - exactly like old code
         time_patterns = {
             "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
             "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
@@ -713,6 +719,49 @@ class RobotController:
         
         return (direction, duration_ms) if direction else None
     
+    def get_direction(self, user_input: str) -> Optional[str]:
+        """Extract movement direction from user input - matching old code function"""
+        user_input = user_input.lower()
+        directions = {
+            "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
+            "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
+            "stop": ["stop", "halt", "stand still", "brake", "freeze"],
+            "turnLeft": ["turn left", "rotate left", "spin left"],
+            "turnRight": ["turn right", "rotate right", "spin right"],
+            "moveLeft": ["move left", "strafe left", "slide left", "sidestep left"],
+            "moveRight": ["move right", "strafe right", "slide right", "sidestep right"]
+        }
+        
+        for direction, phrases in directions.items():
+            if any(phrase in user_input for phrase in phrases):
+                return direction
+        return None
+    
+    def convert_to_milliseconds(self, text: str) -> Optional[int]:
+        """Convert time expressions to milliseconds - matching old code function"""
+        text = text.lower()
+        time_patterns = {
+            "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
+            "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
+            "hours": r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?"
+        }
+        
+        for unit, pattern in time_patterns.items():
+            match = re.search(pattern, text)
+            if match:
+                try:
+                    value = float(match.group(1))
+                    if unit == "seconds":
+                        return int(value * 1000)
+                    elif unit == "minutes":
+                        return int(value * 60000)
+                    elif unit == "hours":
+                        return int(value * 3600000)
+                except (ValueError, OverflowError):
+                    logger.warning(f"Invalid duration value: {match.group(1)}")
+                    continue
+        return None
+    
     async def execute_command_sequence(self, commands: List[str]) -> bool:
         """Execute a sequence of commands"""
         for command in commands:
@@ -731,8 +780,75 @@ class RobotController:
         
         return True
     
+    async def process_user_input(self, user_input: str, context: str = "") -> bool:
+        """Process user input for movement commands - matching old code process_user_input logic"""
+        if not user_input:
+            return False
+        
+        # Split commands by "then" for sequential execution - exactly like old code
+        instructions = [instr.strip() for instr in user_input.split("then")]
+        command_sequence = []
+        has_movement = False
+        
+        # Reset states
+        with self.state_lock:
+            self.state.obstacle_detected = False
+        
+        # Parse instructions - exactly like old code
+        for instruction in instructions:
+            direction = self.get_direction(instruction)
+            time_ms = self.convert_to_milliseconds(instruction)
+            
+            # Default turn time - exactly like old code
+            if direction in ["turnLeft", "turnRight"] and time_ms is None:
+                time_ms = 1500
+            
+            if direction and time_ms is not None:
+                command_sequence.append((direction, time_ms))
+                has_movement = True
+            elif direction == "stop":
+                command_sequence.append(("stop", 0))
+                has_movement = True
+        
+        # Execute command sequence - exactly like old code logic
+        if has_movement:
+            logger.info(f"Executing command sequence: {command_sequence}")
+            
+            for command, duration in command_sequence:
+                with self.state_lock:
+                    self.state.last_command = command
+                
+                # Convert old code command names to new enum names
+                command_map = {
+                    "forward": "forward",
+                    "backward": "backward",
+                    "turnLeft": "turnleft",
+                    "turnRight": "turnright",
+                    "moveLeft": "moveleft",
+                    "moveRight": "moveright",
+                    "stop": "stop"
+                }
+                
+                mapped_command = command_map.get(command, command)
+                
+                if not self.move(mapped_command, duration_ms=duration):
+                    break
+                
+                # Check for interrupts - exactly like old code
+                with self.state_lock:
+                    if self.state.obstacle_detected:
+                        break
+                
+                # Wait for command completion
+                if duration > 0:
+                    await asyncio.sleep(duration / 1000)
+            
+            return True
+        
+        return False
+    
     async def chat(self, message: str, context: str = "") -> str:
-        """Chat with AI model"""
+        """Chat with AI model - exactly like old code AI chat logic"""
         if not self.ai_chain:
             return "AI model not available. Please check Ollama installation."
         
@@ -761,12 +877,124 @@ class RobotController:
                 "obstacle_threshold": self.config.obstacle_threshold,
                 "obstacle_clear_threshold": self.config.obstacle_clear_threshold,
                 "pwm_frequency": self.config.pwm_frequency,
-                "sensor_timeout": self.config.sensor_timeout
+                "sensor_timeout": self.config.sensor_timeout,
+                "motor3_compensate": self.config.motor3_compensate
             }
         }
     
+    # Movement functions matching old code exactly
+    def go_forwards(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
+        """Move forward - matching old goForwards function"""
+        return self.move("forward", speed, time_ms)
+    
+    def go_backwards(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
+        """Move backward - matching old goBackwards function"""
+        return self.move("backward", speed, time_ms)
+    
+    def turn_left(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
+        """Turn left - matching old turnLeft function"""
+        return self.move("turnleft", speed, time_ms)
+    
+    def turn_right(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
+        """Turn right - matching old turnRight function"""
+        return self.move("turnright", speed, time_ms)
+    
+    def move_left(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
+        """Move left - matching old moveLeft function"""
+        return self.move("moveleft", speed, time_ms)
+    
+    def move_right(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
+        """Move right - matching old moveRight function"""
+        return self.move("moveright", speed, time_ms)
+    
+    def start_forward(self) -> bool:
+        """Start forward movement - matching old startForward function"""
+        return self.move("forward")
+    
+    def start_backward(self) -> bool:
+        """Start backward movement - matching old startBackward function"""
+        return self.move("backward")
+    
+    def start_turn_left(self) -> bool:
+        """Start left turn - matching old startTurnLeft function"""
+        return self.move("turnleft")
+    
+    def start_turn_right(self) -> bool:
+        """Start right turn - matching old startTurnRight function"""
+        return self.move("turnright")
+    
+    def start_move_left(self) -> bool:
+        """Start left movement - matching old startMoveLeft function"""
+        return self.move("moveleft")
+    
+    def start_move_right(self) -> bool:
+        """Start right movement - matching old startMoveRight function"""
+        return self.move("moveright")
+    
+    def immediate_stop(self) -> bool:
+        """Immediate stop - matching old immediateStop function"""
+        with self.state_lock:
+            self.state.obstacle_detected = False
+        self.interrupt_event.clear()
+        return self.stop()
+    
+    def stop_motors(self, time_ms: int = 0) -> bool:
+        """Stop motors with optional delay - matching old stopMotors function"""
+        with self.state_lock:
+            self.state.obstacle_detected = False
+        self.interrupt_event.clear()
+        
+        success = self.stop()
+        
+        if time_ms > 0:
+            time.sleep(time_ms / 1000)
+        
+        return success
+    
+    def process_immediate_command(self, command: str) -> bool:
+        """Process immediate movement commands - matching old processImmediateCommand"""
+        command = command.strip().lower()
+        command_map = {
+            "forward": self.start_forward,
+            "backward": self.start_backward,
+            "left": self.start_turn_left,
+            "right": self.start_turn_right,
+            "moveleft": self.start_move_left,
+            "moveright": self.start_move_right,
+            "stop": self.immediate_stop
+        }
+        
+        if command in command_map:
+            return command_map[command]()
+        else:
+            logger.warning(f"Unknown immediate command: {command}")
+            return False
+    
+    def process_command(self, command: str, time_ms: int) -> bool:
+        """Process timed movement commands - matching old processCommand"""
+        with self.state_lock:
+            if self.state.obstacle_detected and command != "stop":
+                logger.warning("Command blocked - obstacle detected")
+                return False
+        
+        command_map = {
+            "forward": lambda: self.go_forwards(time_ms=time_ms),
+            "backward": lambda: self.go_backwards(time_ms=time_ms),
+            "turnRight": lambda: self.turn_right(time_ms=time_ms),
+            "turnLeft": lambda: self.turn_left(time_ms=time_ms),
+            "moveRight": lambda: self.move_right(time_ms=time_ms),
+            "moveLeft": lambda: self.move_left(time_ms=time_ms),
+            "stop": lambda: self.stop_motors(time_ms)
+        }
+        
+        if command in command_map:
+            return command_map[command]()
+        else:
+            logger.warning(f"Unknown timed command: {command}")
+            return False
+    
     def shutdown(self):
-        """Shutdown robot controller with proper cleanup"""
+        """Shutdown robot controller with proper cleanup - matching old cleanup logic"""
         logger.info("Shutting down robot controller...")
         
         # Signal shutdown to all threads
@@ -790,10 +1018,10 @@ class RobotController:
                 if thread.is_alive():
                     logger.warning(f"{name} thread did not finish gracefully")
         
-        # Cleanup GPIO and PWM
+        # Cleanup GPIO and PWM - exactly like old code cleanup
         if self.gpio_initialized:
             try:
-                # Stop PWM objects
+                # Stop PWM objects - exactly like old code
                 pwm_objects = [
                     (self.motor1_pwm, "motor1"),
                     (self.motor2_pwm, "motor2"), 
@@ -808,7 +1036,20 @@ class RobotController:
                         except Exception as e:
                             logger.error(f"Error stopping {name} PWM: {e}")
                 
-                # Cleanup GPIO
+                # Cleanup GPIO - exactly like old code
+                try:
+                    GPIO.remove_event_detect(self.config.echo1)
+                except:
+                    pass
+                try:
+                    GPIO.remove_event_detect(self.config.echo2)
+                except:
+                    pass
+                try:
+                    GPIO.remove_event_detect(self.config.echo3)
+                except:
+                    pass
+                
                 GPIO.cleanup()
                 logger.info("GPIO cleanup completed")
                 
@@ -830,7 +1071,7 @@ def get_robot_controller():
             _robot_controller = RobotController()
         return _robot_controller
 
-# Public API functions for FastAPI backend compatibility
+# Public API functions for FastAPI backend compatibility - matching old code public functions
 def get_status() -> Dict:
     """Get current robot status - called by FastAPI"""
     try:
@@ -915,6 +1156,14 @@ def set_speed(speed: int) -> bool:
         logger.error(f"Error setting speed: {e}")
         return False
 
+def set_motor_compensation(compensation: int) -> bool:
+    """Set motor compensation - called by FastAPI"""
+    try:
+        return get_robot_controller().set_motor_compensation(compensation)
+    except Exception as e:
+        logger.error(f"Error setting motor compensation: {e}")
+        return False
+
 def get_config() -> Dict:
     """Get configuration - called by FastAPI"""
     try:
@@ -931,7 +1180,105 @@ def shutdown_robot():
             _robot_controller.shutdown()
             _robot_controller = None
 
+# Legacy function aliases for backward compatibility with old code
+def goForwards(speed: int, time_ms: int) -> bool:
+    """Legacy function - use go_forwards instead"""
+    return get_robot_controller().go_forwards(speed, time_ms)
+
+def goBackwards(speed: int, time_ms: int) -> bool:
+    """Legacy function - use go_backwards instead"""
+    return get_robot_controller().go_backwards(speed, time_ms)
+
+def turnLeft(speed: int, time_ms: int) -> bool:
+    """Legacy function - use turn_left instead"""
+    return get_robot_controller().turn_left(speed, time_ms)
+
+def turnRight(speed: int, time_ms: int) -> bool:
+    """Legacy function - use turn_right instead"""
+    return get_robot_controller().turn_right(speed, time_ms)
+
+def moveLeft(speed: int, time_ms: int) -> bool:
+    """Legacy function - use move_left instead"""
+    return get_robot_controller().move_left(speed, time_ms)
+
+def moveRight(speed: int, time_ms: int) -> bool:
+    """Legacy function - use move_right instead"""
+    return get_robot_controller().move_right(speed, time_ms)
+
+def startForward() -> bool:
+    """Legacy function - use start_forward instead"""
+    return get_robot_controller().start_forward()
+
+def startBackward() -> bool:
+    """Legacy function - use start_backward instead"""
+    return get_robot_controller().start_backward()
+
+def startTurnLeft() -> bool:
+    """Legacy function - use start_turn_left instead"""
+    return get_robot_controller().start_turn_left()
+
+def startTurnRight() -> bool:
+    """Legacy function - use start_turn_right instead"""
+    return get_robot_controller().start_turn_right()
+
+def startMoveLeft() -> bool:
+    """Legacy function - use start_move_left instead"""
+    return get_robot_controller().start_move_left()
+
+def startMoveRight() -> bool:
+    """Legacy function - use start_move_right instead"""
+    return get_robot_controller().start_move_right()
+
+def immediateStop() -> bool:
+    """Legacy function - use immediate_stop instead"""
+    return get_robot_controller().immediate_stop()
+
+def stopMotors(time_ms: int) -> bool:
+    """Legacy function - use stop_motors instead"""
+    return get_robot_controller().stop_motors(time_ms)
+
+def processImmediateCommand(command: str) -> bool:
+    """Legacy function - use process_immediate_command instead"""
+    return get_robot_controller().process_immediate_command(command)
+
+def processCommand(command: str, time_ms: int) -> bool:
+    """Legacy function - use process_command instead"""
+    return get_robot_controller().process_command(command, time_ms)
+
+def get_distance(trig_pin: int, echo_pin: int) -> float:
+    """Legacy function - get distance from ultrasonic sensor"""
+    return get_robot_controller()._get_distance(trig_pin, echo_pin)
+
 # Factory function for easy initialization
 def create_robot(config: Optional[RobotConfig] = None) -> RobotController:
     """Create a robot controller instance"""
     return RobotController(config)
+
+# Context manager for proper resource cleanup
+class RobotManager:
+    """Context manager for robot controller with automatic cleanup"""
+    
+    def __init__(self, config: Optional[RobotConfig] = None):
+        self.config = config
+        self.robot = None
+    
+    def __enter__(self) -> RobotController:
+        self.robot = RobotController(self.config)
+        return self.robot
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.robot:
+            self.robot.shutdown()
+
+if __name__ == "__main__":
+    print("🤖 Robot Movement Controller - Production Version")
+    print("=" * 50)
+    print("Features:")
+    print("• Full backward compatibility with old code")
+    print("• Proper motor compensation")
+    print("• Thread-safe operation")
+    print("• Enhanced obstacle detection")
+    print("• AI integration")
+    print("• FastAPI integration ready")
+    print("=" * 50)
+    print("✅ Robot controller module loaded successfully")
