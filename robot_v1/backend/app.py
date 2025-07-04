@@ -6,12 +6,20 @@ from pydantic import BaseModel
 import asyncio
 import json
 import logging
+import threading
+import time
 import os
 from typing import Dict, List, Optional
 import uvicorn
 
-# Import robot_movement
-import robot_movement
+# Import your robot control functions
+from robot_movement import (
+    RobotController,
+    process_immediate_command,
+    process_user_input,
+    listen,
+    speak
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,26 +47,29 @@ class TextCommand(BaseModel):
 class DirectionCommand(BaseModel):
     direction: str
 
-class RobotStatusResponse(BaseModel):
+class RobotStatus(BaseModel):
     status: str
     message: str
     obstacle_detected: bool
     current_speeds: Dict[str, int]
-    last_distances: List[float]
-    last_command: str
-    uptime: float
-    gpio_available: bool
 
 # Global state
-robot_movement_available = True
+robot_controller = None
+connected_clients: List[WebSocket] = []
+robot_status = {
+    "status": "idle",
+    "message": "Robot ready",
+    "obstacle_detected": False,
+    "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0}
+}
 
-# Check if robot_movement is available
+# Initialize robot controller
 try:
-    robot_movement.get_status()  # Test if module is functional
-    logger.info("Robot movement module initialized successfully")
+    robot_controller = RobotController()
+    logger.info("Robot controller initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize robot movement module: {e}")
-    robot_movement_available = False
+    logger.error(f"Failed to initialize robot controller: {e}")
+    robot_controller = None
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -100,26 +111,17 @@ async def broadcast_status():
     """Broadcast robot status to all connected clients"""
     while True:
         try:
-            if robot_movement_available:
-                status = robot_movement.get_status()
-                await manager.broadcast(json.dumps({
-                    "type": "status_update",
-                    "data": status
-                }))
-            else:
-                await manager.broadcast(json.dumps({
-                    "type": "status_update",
-                    "data": {
-                        "status": "error",
-                        "message": "Robot movement module not available",
-                        "obstacle_detected": False,
-                        "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
-                        "last_distances": [],
-                        "last_command": "",
-                        "uptime": 0.0,
-                        "gpio_available": False
-                    }
-                }))
+            if robot_controller:
+                robot_status.update({
+                    "status": robot_controller.get_status(),
+                    "obstacle_detected": robot_controller.obstacle_detected,
+                    "current_speeds": robot_controller.get_current_speeds()
+                })
+            
+            await manager.broadcast(json.dumps({
+                "type": "status_update",
+                "data": robot_status
+            }))
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Error in status broadcaster: {e}")
@@ -135,22 +137,18 @@ async def read_root():
 @app.get("/api/status")
 async def get_status():
     """Get current robot status"""
-    if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
-    try:
-        return RobotStatusResponse(**robot_movement.get_status())
-    except Exception as e:
-        logger.error(f"Error getting status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    if not robot_controller:
+        raise HTTPException(status_code=503, detail="Robot controller not available")
+    return RobotStatus(**robot_status)
 
 @app.post("/api/command")
 async def execute_command(command: Command):
     """Execute a robot command"""
-    if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+    if not robot_controller:
+        raise HTTPException(status_code=503, detail="Robot controller not available")
     
     try:
-        success = robot_movement.move(command.command.lower(), duration_ms=command.duration)
+        success = await robot_controller.execute_command(command.command, command.duration)
         response_message = f"Command '{command.command}' executed successfully" if success else f"Command '{command.command}' failed"
         
         await manager.broadcast(json.dumps({
@@ -159,9 +157,6 @@ async def execute_command(command: Command):
         }))
         
         return {"success": success, "message": response_message}
-    except ValueError as e:
-        logger.error(f"Invalid command: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error executing command: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -169,18 +164,12 @@ async def execute_command(command: Command):
 @app.post("/api/text-command")
 async def process_text_command(text_command: TextCommand):
     """Process natural language text command"""
-    if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+    if not robot_controller:
+        raise HTTPException(status_code=503, detail="Robot controller not available")
     
     try:
-        parsed = robot_movement.parse_command(text_command.text)
-        if parsed:
-            direction, duration = parsed
-            success = robot_movement.move(direction, duration_ms=duration)
-            response = f"Command '{text_command.text}' executed successfully" if success else f"Command '{text_command.text}' failed"
-        else:
-            response = await robot_movement.chat(text_command.text)
-            success = True  # Chat responses are considered successful
+        success, response = await process_user_input(text_command.text, "")
+        await speak(response)  # Verbalize AI response
         
         await manager.broadcast(json.dumps({
             "type": "text_command_processed",
@@ -195,21 +184,18 @@ async def process_text_command(text_command: TextCommand):
 @app.post("/api/direction")
 async def move_direction(direction_command: DirectionCommand):
     """Move robot in specified direction"""
-    if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+    if not robot_controller:
+        raise HTTPException(status_code=503, detail="Robot controller not available")
     
     try:
-        success = robot_movement.move(direction_command.direction.lower())
+        process_immediate_command(direction_command.direction.lower())
         
         await manager.broadcast(json.dumps({
             "type": "direction_command",
             "data": {"direction": direction_command.direction, "message": f"Moving {direction_command.direction}"}
         }))
         
-        return {"success": success, "message": f"Moving {direction_command.direction}"}
-    except ValueError as e:
-        logger.error(f"Invalid direction: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
+        return {"success": True, "message": f"Moving {direction_command.direction}"}
     except Exception as e:
         logger.error(f"Error moving direction: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -217,26 +203,57 @@ async def move_direction(direction_command: DirectionCommand):
 @app.post("/api/stop")
 async def stop_robot():
     """Stop robot immediately"""
-    if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+    if not robot_controller:
+        raise HTTPException(status_code=503, detail="Robot controller not available")
     
     try:
-        success = robot_movement.stop()
+        process_immediate_command("stop")
         
         await manager.broadcast(json.dumps({
             "type": "robot_stopped",
             "data": {"message": "Robot stopped"}
         }))
         
-        return {"success": success, "message": "Robot stopped"}
+        return {"success": True, "message": "Robot stopped"}
     except Exception as e:
         logger.error(f"Error stopping robot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/speech/start")
 async def start_speech_recognition():
-    """Signal client-side speech recognition"""
-    return {"success": True, "message": "Speech recognition handled client-side"}
+    """Start speech recognition"""
+    if not robot_controller:
+        raise HTTPException(status_code=503, detail="Robot controller not available")
+    
+    try:
+        asyncio.create_task(handle_speech_recognition())
+        return {"success": True, "message": "Speech recognition started"}
+    except Exception as e:
+        logger.error(f"Error starting speech recognition: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def handle_speech_recognition():
+    """Handle speech recognition in background"""
+    try:
+        while True:
+            user_input = listen()
+            
+            if user_input:
+                success, response = await process_user_input(user_input, "")
+                await speak(response)  # Verbalize AI response
+                
+                await manager.broadcast(json.dumps({
+                    "type": "speech_recognized",
+                    "data": {
+                        "text": user_input,
+                        "success": success,
+                        "message": response
+                    }
+                }))
+            
+            await asyncio.sleep(0.1)
+    except Exception as e:
+        logger.error(f"Error in speech recognition: {e}")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -252,63 +269,30 @@ async def websocket_endpoint(websocket: WebSocket):
             payload = message.get("data", {})
             
             if message_type == "direction_command":
-                direction = payload.get("direction", "").lower()
+                direction = payload.get("direction", "")
                 if direction:
-                    try:
-                        success = robot_movement.move(direction)
-                        await manager.broadcast(json.dumps({
-                            "type": "direction_executed",
-                            "data": {"direction": direction, "success": success}
-                        }))
-                    except ValueError as e:
-                        logger.error(f"Invalid direction: {e}")
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "data": {"message": f"Invalid direction: {direction}"}
-                        }))
-                    except Exception as e:
-                        logger.error(f"Error processing direction command: {e}")
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "data": {"message": f"Error processing direction: {str(e)}"}
-                        }))
+                    process_immediate_command(direction.lower())
+                    await manager.broadcast(json.dumps({
+                        "type": "direction_executed",
+                        "data": {"direction": direction}
+                    }))
             
             elif message_type == "text_command":
                 text = payload.get("text", "")
                 if text:
-                    try:
-                        parsed = robot_movement.parse_command(text)
-                        if parsed:
-                            direction, duration = parsed
-                            success = robot_movement.move(direction, duration_ms=duration)
-                            response = f"Command '{text}' executed successfully" if success else f"Command '{text}' failed"
-                        else:
-                            response = await robot_movement.chat(text)
-                            success = True
-                        await manager.broadcast(json.dumps({
-                            "type": "text_command_result",
-                            "data": {"text": text, "success": success, "message": response}
-                        }))
-                    except Exception as e:
-                        logger.error(f"Error processing text command: {e}")
-                        await websocket.send_text(json.dumps({
-                            "type": "error",
-                            "data": {"message": f"Error processing text command: {str(e)}"}
-                        }))
+                    success, response = await process_user_input(text, "")
+                    await speak(response)  # Verbalize AI response
+                    await manager.broadcast(json.dumps({
+                        "type": "text_command_result",
+                        "data": {"text": text, "success": success, "message": response}
+                    }))
             
             elif message_type == "stop_command":
-                try:
-                    success = robot_movement.stop()
-                    await manager.broadcast(json.dumps({
-                        "type": "robot_stopped",
-                        "data": {"message": "Robot stopped via WebSocket"}
-                    }))
-                except Exception as e:
-                    logger.error(f"Error stopping robot: {e}")
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "data": {"message": f"Error stopping robot: {str(e)}"}
-                    }))
+                process_immediate_command("stop")
+                await manager.broadcast(json.dumps({
+                    "type": "robot_stopped",
+                    "data": {"message": "Robot stopped via WebSocket"}
+                }))
             
             elif message_type == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))

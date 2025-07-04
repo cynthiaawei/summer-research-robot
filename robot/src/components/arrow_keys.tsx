@@ -1,8 +1,63 @@
-const Arrow_keys = () => {
-  const handleclick = (direction: string) => {
-    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-    ws.onopen = () => ws.send(JSON.stringify({ type: "direction_command", data: { direction } }));
-    ws.onclose = () => console.log("WebSocket closed");
+import React, { useState, useEffect } from 'react';
+
+const ArrowKeys: React.FC = () => {
+  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [response, setResponse] = useState<string>('');
+  const [status, setStatus] = useState<any>(null);
+
+  // Setup WebSocket connection
+  useEffect(() => {
+    const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    setWs(websocket);
+
+    websocket.onopen = () => {
+      console.log('WebSocket connected');
+    };
+
+    websocket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'status_update') {
+        setStatus(data.data);
+      } else if (data.type === 'direction_executed') {
+        setResponse(`Direction ${data.data.direction} ${data.data.success ? 'succeeded' : 'failed'}`);
+      } else if (data.type === 'robot_stopped') {
+        setResponse(data.data.message);
+      } else if (data.type === 'error') {
+        setResponse(data.data.message);
+      }
+    };
+
+    websocket.onerror = () => {
+      console.error('WebSocket error');
+      setResponse('WebSocket connection error');
+    };
+
+    websocket.onclose = () => {
+      console.log('WebSocket closed');
+      setResponse('WebSocket disconnected');
+      setWs(null);
+    };
+
+    return () => websocket.close();
+  }, []);
+
+  const sendDirection = (direction: string) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'direction_command',
+        data: { direction }
+      }));
+    } else {
+      setResponse('WebSocket not connected');
+    }
+  };
+
+  const sendStop = () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'stop_command' }));
+    } else {
+      setResponse('WebSocket not connected');
+    }
   };
 
   const containerStyle = {
@@ -64,8 +119,14 @@ const Arrow_keys = () => {
     e.currentTarget.style.boxShadow = '0 8px 16px rgba(102, 126, 234, 0.3)';
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleMouseDown = (e: React.MouseEvent<HTMLButtonElement>, direction: string) => {
     e.currentTarget.style.transform = 'translateY(-2px) scale(1.02)';
+    sendDirection(direction);
+  };
+
+  const handleMouseUp = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.transform = 'translateY(-4px) scale(1.05)';
+    sendStop();
   };
 
   return (
@@ -74,46 +135,60 @@ const Arrow_keys = () => {
         <div style={gridStyle}>
           <button 
             style={buttonStyle}
-            onClick={() => handleclick("up")}
+            onMouseDown={(e) => handleMouseDown(e, 'up')}
+            onMouseUp={handleMouseUp}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
-            onMouseDown={handleMouseDown}
           >
             ↑
           </button>
           <div style={rowStyle}>
             <button 
               style={buttonStyle}
-              onClick={() => handleclick("left")}
+              onMouseDown={(e) => handleMouseDown(e, 'left')}
+              onMouseUp={handleMouseUp}
               onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
-              onMouseDown={handleMouseDown}
             >
               ←
             </button>
             <button 
               style={buttonStyle}
-              onClick={() => handleclick("right")}
+              onMouseDown={(e) => handleMouseDown(e, 'right')}
+              onMouseUp={handleMouseUp}
               onMouseEnter={handleMouseEnter}
               onMouseLeave={handleMouseLeave}
-              onMouseDown={handleMouseDown}
             >
               →
             </button>
           </div>
           <button 
             style={buttonStyle}
-            onClick={() => handleclick("down")}
+            onMouseDown={(e) => handleMouseDown(e, 'down')}
+            onMouseUp={handleMouseUp}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
-            onMouseDown={handleMouseDown}
           >
             ↓
           </button>
+        </div>
+        <div style={{ marginTop: '2rem', color: '#333' }}>
+          <p><strong>Response:</strong> {response}</p>
+          {status && (
+            <div>
+              <h3>Robot Status</h3>
+              <p><strong>Status:</strong> {status.status}</p>
+              <p><strong>Message:</strong> {status.message}</p>
+              <p><strong>Obstacle Detected:</strong> {status.obstacle_detected ? 'Yes' : 'No'}</p>
+              <p><strong>Motor Speeds:</strong> {JSON.stringify(status.current_speeds)}</p>
+              <p><strong>Last Command:</strong> {status.last_command}</p>
+              <p><strong>Uptime:</strong> {status.uptime}s</p>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-export default Arrow_keys;
+export default ArrowKeys;

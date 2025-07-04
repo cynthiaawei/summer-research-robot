@@ -3,14 +3,17 @@ import re
 import threading
 import time
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Tuple, Union
+from dataclasses import dataclass
+from enum import Enum
+import json
 
+# Optional imports with graceful fallbacks
 try:
     import RPi.GPIO as GPIO
     GPIO_AVAILABLE = True
 except ImportError:
     GPIO_AVAILABLE = False
-    print("⚠️ GPIO not available - running in simulation mode")
 
 try:
     from langchain_ollama import OllamaLLM
@@ -18,132 +21,229 @@ try:
     AI_AVAILABLE = True
 except ImportError:
     AI_AVAILABLE = False
-    print("⚠️ AI model not available - install langchain-ollama for AI features")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+class RobotStatus(Enum):
+    """Robot status enumeration"""
+    IDLE = "idle"
+    MOVING = "moving"
+    OBSTACLE_DETECTED = "obstacle_detected"
+    ERROR = "error"
+    EMERGENCY_STOP = "emergency_stop"
+
+class MovementDirection(Enum):
+    """Movement direction enumeration"""
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    TURN_LEFT = "turnLeft"
+    TURN_RIGHT = "turnRight"
+    MOVE_LEFT = "moveLeft"
+    MOVE_RIGHT = "moveRight"
+    STOP = "stop"
+
+@dataclass
+class RobotConfig:
+    """Robot configuration dataclass"""
+    # Motor pins
+    motor1_speed: int = 38
+    motor1_dir: int = 40
+    motor2_speed: int = 32
+    motor2_dir: int = 36
+    motor3_speed: int = 16
+    motor3_dir: int = 26
+    
+    # Ultrasonic sensor pins
+    echo1: int = 31
+    echo2: int = 29
+    echo3: int = 22
+    trig1: int = 11
+    trig2: int = 13
+    trig3: int = 15
+    
+    # Motor settings
+    pwm_frequency: int = 1000
+    default_speed: int = 25
+    motor3_compensate: int = 15
+    
+    # Obstacle detection
+    obstacle_threshold: float = 30.0
+    sensor_timeout: float = 0.5
+    
+    # AI model
+    ai_model: str = "llama3"
+
+@dataclass
+class RobotState:
+    """Robot state dataclass"""
+    motor1_speed: int = 0
+    motor2_speed: int = 0
+    motor3_speed: int = 0
+    status: RobotStatus = RobotStatus.IDLE
+    obstacle_detected: bool = False
+    last_distances: List[float] = None
+    last_command: str = ""
+    uptime: float = 0.0
+    
+    def __post_init__(self):
+        if self.last_distances is None:
+            self.last_distances = []
+
 class RobotController:
-    def __init__(self):
-        """Initialize the robot controller"""
-        self.setup_gpio()
-        self.setup_ai()
-        self.reset_state()
+    """Main robot controller class for backend integration"""
+    
+    def __init__(self, config: Optional[RobotConfig] = None):
+        """Initialize robot controller with configuration"""
+        self.config = config or RobotConfig()
+        self.state = RobotState()
+        self.start_time = time.time()
         
-    def setup_gpio(self):
+        # Threading controls
+        self.movement_lock = threading.Lock()
+        self.interrupt_event = threading.Event()
+        self.obstacle_event = threading.Event()
+        self.shutdown_event = threading.Event()
+        
+        # Initialize components
+        self._setup_gpio()
+        self._setup_ai()
+        self._start_background_tasks()
+        
+        logger.info("Robot controller initialized successfully")
+    
+    def _setup_gpio(self):
         """Setup GPIO pins and PWM"""
         if not GPIO_AVAILABLE:
             logger.warning("GPIO not available - running in simulation mode")
+            self.gpio_initialized = False
             return
-            
-        # Motor Pin Definitions
-        self.Motor1_Speed = 38
-        self.Motor1_Dir = 40
-        self.Motor2_Speed = 32
-        self.Motor2_Dir = 36
-        self.Motor3_Speed = 16
-        self.Motor3_Dir = 26
-        
-        # Ultrasonic Sensor Pins
-        self.Echo1 = 31
-        self.Echo2 = 29
-        self.Echo3 = 22
-        self.Trig1 = 11
-        self.Trig2 = 13
-        self.Trig3 = 15
         
         try:
             # GPIO Setup
             GPIO.setmode(GPIO.BOARD)
-            GPIO.setup(self.Echo1, GPIO.IN)
-            GPIO.setup(self.Echo2, GPIO.IN)
-            GPIO.setup(self.Echo3, GPIO.IN)
-            GPIO.setup(self.Trig1, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Trig2, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Trig3, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor1_Speed, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor1_Dir, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor2_Speed, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor2_Dir, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor3_Speed, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor3_Dir, GPIO.OUT, initial=GPIO.LOW)
             
-            # Set PWM frequencies
-            freq = 1000
-            self.Motor1_pwm = GPIO.PWM(self.Motor1_Speed, freq)
-            self.Motor2_pwm = GPIO.PWM(self.Motor2_Speed, freq)
-            self.Motor3_pwm = GPIO.PWM(self.Motor3_Speed, freq)
-            self.Motor1_pwm.start(0)
-            self.Motor2_pwm.start(0)
-            self.Motor3_pwm.start(0)
+            # Setup ultrasonic sensors
+            GPIO.setup(self.config.echo1, GPIO.IN)
+            GPIO.setup(self.config.echo2, GPIO.IN)
+            GPIO.setup(self.config.echo3, GPIO.IN)
+            GPIO.setup(self.config.trig1, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.trig2, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(self.config.trig3, GPIO.OUT, initial=GPIO.LOW)
             
+            # Setup motors
+            motor_pins = [
+                (self.config.motor1_speed, self.config.motor1_dir),
+                (self.config.motor2_speed, self.config.motor2_dir),
+                (self.config.motor3_speed, self.config.motor3_dir)
+            ]
+            
+            for speed_pin, dir_pin in motor_pins:
+                GPIO.setup(speed_pin, GPIO.OUT, initial=GPIO.LOW)
+                GPIO.setup(dir_pin, GPIO.OUT, initial=GPIO.LOW)
+            
+            # Setup PWM
+            self.motor1_pwm = GPIO.PWM(self.config.motor1_speed, self.config.pwm_frequency)
+            self.motor2_pwm = GPIO.PWM(self.config.motor2_speed, self.config.pwm_frequency)
+            self.motor3_pwm = GPIO.PWM(self.config.motor3_speed, self.config.pwm_frequency)
+            
+            for pwm in [self.motor1_pwm, self.motor2_pwm, self.motor3_pwm]:
+                pwm.start(0)
+            
+            self.gpio_initialized = True
             logger.info("GPIO initialized successfully")
+            
         except Exception as e:
             logger.error(f"GPIO initialization failed: {e}")
-            
-    def setup_ai(self):
-        """Setup AI model"""
+            self.gpio_initialized = False
+    
+    def _setup_ai(self):
+        """Setup AI model for conversation"""
         if not AI_AVAILABLE:
-            logger.warning("AI model not available")
-            self.chain = None
+            logger.warning("AI not available - conversational features disabled")
+            self.ai_chain = None
             return
-            
+        
         try:
             template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
-            model = OllamaLLM(model="llama3")
+            model = OllamaLLM(model=self.config.ai_model)
             prompt = ChatPromptTemplate.from_template(template)
-            self.chain = prompt | model
+            self.ai_chain = prompt | model
             logger.info("AI model initialized successfully")
         except Exception as e:
-            logger.error(f"AI model initialization failed: {e}")
-            self.chain = None
-            
-    def reset_state(self):
-        """Reset robot state"""
-        self.gCurSpeed1 = 0
-        self.gCurSpeed2 = 0
-        self.gCurSpeed3 = 0
-        self.gSliderSpeed = 25
-        self.motor3_compensate = 15
-        self.obstacle_detected = False
-        self.obstacle_detection_active = False
-        self.OBSTACLE_THRESHOLD = 30.0
-        self.movement_lock = threading.Lock()
-        self.interrupt_event = threading.Event()
-        self.obstacle_event = threading.Event()
-        self.command_character = ""
-        self.perm_stop = False
-        self.return_to_mode_selection = False
-        
-        # Start obstacle detection thread
-        self.obstacle_thread = threading.Thread(target=self.obstacle_detection_loop, daemon=True)
+            logger.error(f"AI initialization failed: {e}")
+            self.ai_chain = None
+    
+    def _start_background_tasks(self):
+        """Start background monitoring tasks"""
+        self.obstacle_thread = threading.Thread(target=self._obstacle_detection_loop, daemon=True)
         self.obstacle_thread.start()
         
-    def get_status(self) -> str:
-        """Get current robot status"""
-        if self.obstacle_detected:
-            return "obstacle_detected"
-        elif any([self.gCurSpeed1 > 0, self.gCurSpeed2 > 0, self.gCurSpeed3 > 0]):
-            return "moving"
-        else:
-            return "idle"
-            
-    def get_current_speeds(self) -> Dict[str, int]:
-        """Get current motor speeds"""
-        return {
-            "motor1": self.gCurSpeed1,
-            "motor2": self.gCurSpeed2,
-            "motor3": self.gCurSpeed3
-        }
+        self.status_thread = threading.Thread(target=self._status_update_loop, daemon=True)
+        self.status_thread.start()
+    
+    def _obstacle_detection_loop(self):
+        """Background obstacle detection loop"""
+        while not self.shutdown_event.is_set():
+            try:
+                if self._is_moving() and not self.state.obstacle_detected:
+                    distances = self._get_all_distances()
+                    
+                    if distances:
+                        min_distance = min(distances)
+                        self.state.last_distances = distances
+                        
+                        if min_distance < self.config.obstacle_threshold:
+                            logger.warning(f"Obstacle detected at {min_distance}cm!")
+                            self.state.obstacle_detected = True
+                            self.state.status = RobotStatus.OBSTACLE_DETECTED
+                            self.obstacle_event.set()
+                            self.emergency_stop()
+                    
+                    time.sleep(0.05)
+                else:
+                    time.sleep(0.1)
+                    
+            except Exception as e:
+                logger.error(f"Error in obstacle detection: {e}")
+                time.sleep(0.1)
+    
+    def _status_update_loop(self):
+        """Background status update loop"""
+        while not self.shutdown_event.is_set():
+            try:
+                self.state.uptime = time.time() - self.start_time
+                
+                # Update status based on current state
+                if self.state.obstacle_detected:
+                    self.state.status = RobotStatus.OBSTACLE_DETECTED
+                elif self._is_moving():
+                    self.state.status = RobotStatus.MOVING
+                else:
+                    self.state.status = RobotStatus.IDLE
+                
+                time.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Error in status update: {e}")
+                time.sleep(0.1)
+    
+    def _is_moving(self) -> bool:
+        """Check if robot is currently moving"""
+        return any([
+            self.state.motor1_speed > 0,
+            self.state.motor2_speed > 0,
+            self.state.motor3_speed > 0
+        ])
+    
+    def _get_distance(self, trig_pin: int, echo_pin: int) -> float:
+        """Get distance from a single ultrasonic sensor"""
+        if not self.gpio_initialized:
+            return 100.0  # Simulation mode
         
-    def get_distance(self, trig_pin, echo_pin, timeout=0.5) -> float:
-        """Get distance from ultrasonic sensor"""
-        if not GPIO_AVAILABLE:
-            return 100.0  # Simulation mode - no obstacles
-            
         try:
-            # Ensure clean state
+            # Clean state
             GPIO.output(trig_pin, False)
             time.sleep(0.000002)
             
@@ -152,361 +252,339 @@ class RobotController:
             time.sleep(0.00001)
             GPIO.output(trig_pin, False)
             
-            # Wait for echo start
+            # Wait for echo
             timeout_start = time.time()
             while GPIO.input(echo_pin) == 0:
-                if time.time() - timeout_start > timeout:
+                if time.time() - timeout_start > self.config.sensor_timeout:
                     return -1
             pulse_start = time.time()
             
-            # Wait for echo end
             timeout_start = time.time()
             while GPIO.input(echo_pin) == 1:
-                if time.time() - timeout_start > timeout:
+                if time.time() - timeout_start > self.config.sensor_timeout:
                     return -1
             pulse_end = time.time()
             
             # Calculate distance
             pulse_duration = pulse_end - pulse_start
-            distance = pulse_duration * 17150  # Speed of sound calculation
+            distance = pulse_duration * 17150
             distance = round(distance, 2)
             
-            # Validate distance range
-            if distance < 2 or distance > 400:
-                return -1
-                
-            return distance
+            return distance if 2 <= distance <= 400 else -1
+            
         except Exception as e:
             logger.error(f"Distance measurement error: {e}")
             return -1
-            
-    def obstacle_detection_loop(self):
-        """Obstacle detection loop"""
-        while True:
-            try:
-                if self.obstacle_detection_active and not self.obstacle_detected:
-                    if any([self.gCurSpeed1 > 0, self.gCurSpeed2 > 0, self.gCurSpeed3 > 0]):
-                        if GPIO_AVAILABLE:
-                            distances = []
-                            for trig, echo in [(self.Trig1, self.Echo1), (self.Trig2, self.Echo2), (self.Trig3, self.Echo3)]:
-                                dist = self.get_distance(trig, echo, timeout=0.3)
-                                if dist > 0:
-                                    distances.append(dist)
-                            
-                            if distances:
-                                min_distance = min(distances)
-                                if min_distance < self.OBSTACLE_THRESHOLD:
-                                    logger.warning(f"Obstacle detected at {min_distance}cm!")
-                                    self.obstacle_detected = True
-                                    self.obstacle_event.set()
-                                    self.emergency_stop()
-                        
-                        time.sleep(0.05)
-                    else:
-                        time.sleep(0.1)
-                else:
-                    time.sleep(0.1)
-                    
-            except Exception as e:
-                logger.error(f"Error in obstacle detection: {e}")
-                time.sleep(0.1)
-                
-    def emergency_stop(self):
-        """Emergency stop"""
-        with self.movement_lock:
-            try:
-                if GPIO_AVAILABLE:
-                    self.Motor1_pwm.ChangeDutyCycle(0)
-                    self.Motor2_pwm.ChangeDutyCycle(0)
-                    self.Motor3_pwm.ChangeDutyCycle(0)
-                
-                self.gCurSpeed1 = 0
-                self.gCurSpeed2 = 0
-                self.gCurSpeed3 = 0
-                self.obstacle_detection_active = False
-                self.perm_stop = True
-                self.return_to_mode_selection = True
-                
-                logger.info("Emergency stop executed")
-            except Exception as e:
-                logger.error(f"Error during emergency stop: {e}")
-                
-    def change_speed_smooth(self, new_speed1, new_speed2, new_speed3):
-        """Change motor speeds smoothly"""
-        if not GPIO_AVAILABLE:
-            self.gCurSpeed1 = new_speed1
-            self.gCurSpeed2 = new_speed2
-            self.gCurSpeed3 = new_speed3
+    
+    def _get_all_distances(self) -> List[float]:
+        """Get distances from all sensors"""
+        sensor_configs = [
+            (self.config.trig1, self.config.echo1),
+            (self.config.trig2, self.config.echo2),
+            (self.config.trig3, self.config.echo3)
+        ]
+        
+        distances = []
+        for trig, echo in sensor_configs:
+            dist = self._get_distance(trig, echo)
+            if dist > 0:
+                distances.append(dist)
+        
+        return distances
+    
+    def _change_speeds_smooth(self, new_speeds: Tuple[int, int, int]):
+        """Smoothly change motor speeds"""
+        if not self.gpio_initialized:
+            self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed = new_speeds
             return
-            
+        
         with self.movement_lock:
-            if self.obstacle_detected or self.interrupt_event.is_set():
+            if self.state.obstacle_detected or self.interrupt_event.is_set():
                 return
-                
-            if any([new_speed1 > 0, new_speed2 > 0, new_speed3 > 0]):
-                self.obstacle_detection_active = True
             
-            steps = max(abs(new_speed1 - self.gCurSpeed1), 
-                       abs(new_speed2 - self.gCurSpeed2), 
-                       abs(new_speed3 - self.gCurSpeed3))
+            current_speeds = (self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed)
+            steps = max(abs(new_speeds[i] - current_speeds[i]) for i in range(3))
             
             if steps > 0:
                 for step in range(steps + 1):
-                    if self.obstacle_detected or self.interrupt_event.is_set():
+                    if self.state.obstacle_detected or self.interrupt_event.is_set():
                         break
-                        
+                    
                     progress = step / steps if steps > 0 else 1
-                    speed1 = int(self.gCurSpeed1 + (new_speed1 - self.gCurSpeed1) * progress)
-                    speed2 = int(self.gCurSpeed2 + (new_speed2 - self.gCurSpeed2) * progress)
-                    speed3 = int(self.gCurSpeed3 + (new_speed3 - self.gCurSpeed3) * progress)
+                    speeds = [
+                        int(current_speeds[i] + (new_speeds[i] - current_speeds[i]) * progress)
+                        for i in range(3)
+                    ]
                     
-                    speed1 = max(0, min(100, speed1))
-                    speed2 = max(0, min(100, speed2))
-                    speed3 = max(0, min(100, speed3))
+                    # Clamp speeds
+                    speeds = [max(0, min(100, speed)) for speed in speeds]
                     
-                    if GPIO_AVAILABLE:
-                        self.Motor1_pwm.ChangeDutyCycle(speed1)
-                        self.Motor2_pwm.ChangeDutyCycle(speed2)
-                        self.Motor3_pwm.ChangeDutyCycle(speed3)
+                    # Apply PWM
+                    self.motor1_pwm.ChangeDutyCycle(speeds[0])
+                    self.motor2_pwm.ChangeDutyCycle(speeds[1])
+                    self.motor3_pwm.ChangeDutyCycle(speeds[2])
                     
                     time.sleep(0.01)
             
-            if not self.obstacle_detected and not self.interrupt_event.is_set():
-                self.gCurSpeed1 = new_speed1
-                self.gCurSpeed2 = new_speed2
-                self.gCurSpeed3 = new_speed3
+            # Update state
+            if not self.state.obstacle_detected and not self.interrupt_event.is_set():
+                self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed = new_speeds
             else:
-                if GPIO_AVAILABLE:
-                    self.Motor1_pwm.ChangeDutyCycle(0)
-                    self.Motor2_pwm.ChangeDutyCycle(0)
-                    self.Motor3_pwm.ChangeDutyCycle(0)
-                self.gCurSpeed1 = 0
-                self.gCurSpeed2 = 0
-                self.gCurSpeed3 = 0
-                
-            if all([new_speed1 == 0, new_speed2 == 0, new_speed3 == 0]):
-                self.obstacle_detection_active = False
-                
-    def move_robot(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
+                self._stop_motors_immediate()
+    
+    def _stop_motors_immediate(self):
+        """Immediately stop all motors"""
+        if self.gpio_initialized:
+            self.motor1_pwm.ChangeDutyCycle(0)
+            self.motor2_pwm.ChangeDutyCycle(0)
+            self.motor3_pwm.ChangeDutyCycle(0)
+        
+        self.state.motor1_speed = 0
+        self.state.motor2_speed = 0
+        self.state.motor3_speed = 0
+    
+    # Public API methods
+    
+    def get_status(self) -> Dict:
+        """Get current robot status"""
+        return {
+            "status": self.state.status.value,
+            "motor_speeds": {
+                "motor1": self.state.motor1_speed,
+                "motor2": self.state.motor2_speed,
+                "motor3": self.state.motor3_speed
+            },
+            "obstacle_detected": self.state.obstacle_detected,
+            "last_distances": self.state.last_distances,
+            "last_command": self.state.last_command,
+            "uptime": self.state.uptime,
+            "gpio_available": self.gpio_initialized
+        }
+    
+    def get_sensor_data(self) -> Dict:
+        """Get current sensor readings"""
+        distances = self._get_all_distances()
+        return {
+            "distances": distances,
+            "min_distance": min(distances) if distances else None,
+            "obstacle_threshold": self.config.obstacle_threshold,
+            "obstacle_detected": self.state.obstacle_detected
+        }
+    
+    def move(self, direction: Union[str, MovementDirection], speed: Optional[int] = None, 
+             duration_ms: Optional[int] = None) -> bool:
         """Move robot in specified direction"""
-        if self.obstacle_detected:
+        if isinstance(direction, str):
+            try:
+                direction = MovementDirection(direction.lower())
+            except ValueError:
+                logger.error(f"Invalid direction: {direction}")
+                return False
+        
+        if self.state.obstacle_detected and direction != MovementDirection.STOP:
+            logger.warning("Movement blocked - obstacle detected")
             return False
-            
-        if speed is None:
-            speed = self.gSliderSpeed
-            
-        self.obstacle_detected = False
+        
+        speed = speed or self.config.default_speed
+        self.state.last_command = direction.value
+        
+        # Reset states
+        self.state.obstacle_detected = False
         self.interrupt_event.clear()
         
+        # Direction configurations
         direction_configs = {
-            "forward": {
-                "dirs": [GPIO.HIGH, GPIO.HIGH, GPIO.LOW] if GPIO_AVAILABLE else [1, 1, 0],
-                "speeds": [0, speed, speed + self.motor3_compensate]
+            MovementDirection.FORWARD: {
+                "dirs": [GPIO.HIGH, GPIO.HIGH, GPIO.LOW] if self.gpio_initialized else [1, 1, 0],
+                "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
-            "backward": {
-                "dirs": [GPIO.HIGH, GPIO.LOW, GPIO.HIGH] if GPIO_AVAILABLE else [1, 0, 1],
-                "speeds": [0, speed, speed + self.motor3_compensate]
+            MovementDirection.BACKWARD: {
+                "dirs": [GPIO.HIGH, GPIO.LOW, GPIO.HIGH] if self.gpio_initialized else [1, 0, 1],
+                "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
-            "turnLeft": {
-                "dirs": [GPIO.HIGH, GPIO.LOW, GPIO.LOW] if GPIO_AVAILABLE else [1, 0, 0],
-                "speeds": [speed, speed, speed + self.motor3_compensate]
+            MovementDirection.TURN_LEFT: {
+                "dirs": [GPIO.HIGH, GPIO.LOW, GPIO.LOW] if self.gpio_initialized else [1, 0, 0],
+                "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
-            "turnRight": {
-                "dirs": [GPIO.LOW, GPIO.HIGH, GPIO.HIGH] if GPIO_AVAILABLE else [0, 1, 1],
-                "speeds": [speed, speed, speed + self.motor3_compensate]
+            MovementDirection.TURN_RIGHT: {
+                "dirs": [GPIO.LOW, GPIO.HIGH, GPIO.HIGH] if self.gpio_initialized else [0, 1, 1],
+                "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
-            "moveLeft": {
-                "dirs": [GPIO.HIGH, GPIO.HIGH, GPIO.LOW] if GPIO_AVAILABLE else [1, 1, 0],
+            MovementDirection.MOVE_LEFT: {
+                "dirs": [GPIO.HIGH, GPIO.HIGH, GPIO.LOW] if self.gpio_initialized else [1, 1, 0],
                 "speeds": [int(speed * 1.5), speed, 0]
             },
-            "moveRight": {
-                "dirs": [GPIO.LOW, GPIO.LOW, GPIO.HIGH] if GPIO_AVAILABLE else [0, 0, 1],
-                "speeds": [int(speed * 1.5), speed, speed + self.motor3_compensate]
+            MovementDirection.MOVE_RIGHT: {
+                "dirs": [GPIO.LOW, GPIO.LOW, GPIO.HIGH] if self.gpio_initialized else [0, 0, 1],
+                "speeds": [int(speed * 1.5), speed, speed + self.config.motor3_compensate]
             },
-            "stop": {
-                "dirs": [GPIO.LOW, GPIO.LOW, GPIO.LOW] if GPIO_AVAILABLE else [0, 0, 0],
+            MovementDirection.STOP: {
+                "dirs": [GPIO.LOW, GPIO.LOW, GPIO.LOW] if self.gpio_initialized else [0, 0, 0],
                 "speeds": [0, 0, 0]
             }
         }
         
-        if direction not in direction_configs:
-            logger.error(f"Unknown direction: {direction}")
-            return False
-            
         config = direction_configs[direction]
         
-        if GPIO_AVAILABLE:
-            GPIO.output(self.Motor1_Dir, config["dirs"][0])
-            GPIO.output(self.Motor2_Dir, config["dirs"][1])
-            GPIO.output(self.Motor3_Dir, config["dirs"][2])
+        # Set motor directions
+        if self.gpio_initialized:
+            GPIO.output(self.config.motor1_dir, config["dirs"][0])
+            GPIO.output(self.config.motor2_dir, config["dirs"][1])
+            GPIO.output(self.config.motor3_dir, config["dirs"][2])
         
-        self.change_speed_smooth(config["speeds"][0], config["speeds"][1], config["speeds"][2])
+        # Apply speeds
+        self._change_speeds_smooth(tuple(config["speeds"]))
         
+        # Handle duration
         if duration_ms is not None and duration_ms > 0:
-            start_time = time.time()
-            while time.time() - start_time < duration_ms / 1000:
-                if self.obstacle_detected or self.interrupt_event.is_set():
-                    break
-                time.sleep(0.01)
-            if not self.obstacle_detected and not self.interrupt_event.is_set():
-                self.change_speed_smooth(0, 0, 0)
+            time.sleep(duration_ms / 1000)
+            if not self.state.obstacle_detected:
+                self._change_speeds_smooth((0, 0, 0))
         
         return True
-        
-    async def execute_command(self, command: str, duration: Optional[int] = None) -> bool:
-        """Execute a robot command"""
-        try:
-            self.command_character = command
-            command_map = {
-                "forward": "forward",
-                "backward": "backward",
-                "turnLeft": "turnLeft",
-                "turnRight": "turnRight",
-                "moveLeft": "moveLeft",
-                "moveRight": "moveRight",
-                "stop": "stop"
-            }
-            
-            robot_direction = command_map.get(command.lower())
-            if robot_direction:
-                success = self.move_robot(robot_direction, duration_ms=duration)
-                self.command_character = ""
-                logger.info(f"Command executed successfully: {command}")
-                return success
-            else:
-                logger.warning(f"Unknown command: {command}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error executing command: {e}")
-            self.command_character = ""
-            return False
-            
-    def cleanup(self):
-        """Cleanup GPIO resources"""
-        if GPIO_AVAILABLE:
-            try:
-                self.Motor1_pwm.stop()
-                self.Motor2_pwm.stop()
-                self.Motor3_pwm.stop()
-                GPIO.cleanup()
-                logger.info("GPIO cleanup completed")
-            except Exception as e:
-                logger.error(f"Error during GPIO cleanup: {e}")
-
-# Global robot controller instance
-robot_controller = None
-
-def initialize_robot() -> RobotController:
-    """Initialize the global robot controller"""
-    global robot_controller
-    if robot_controller is None:
-        robot_controller = RobotController()
-    return robot_controller
-
-def process_immediate_command(command: str):
-    """Process immediate movement commands"""
-    global robot_controller
-    if robot_controller is None:
-        robot_controller = initialize_robot()
     
-    command = command.strip().lower()
-    robot_controller.move_robot(command)
-
-async def process_user_input(user_input: str, context: str = "") -> bool:
-    """Process user input for movement commands"""
-    global robot_controller
-    if robot_controller is None:
-        robot_controller = initialize_robot()
+    def stop(self) -> bool:
+        """Stop the robot"""
+        return self.move(MovementDirection.STOP)
     
-    if not user_input:
+    def emergency_stop(self) -> bool:
+        """Emergency stop with state reset"""
+        logger.warning("Emergency stop activated")
+        self.state.status = RobotStatus.EMERGENCY_STOP
+        self._stop_motors_immediate()
+        return True
+    
+    def reset_obstacle_detection(self) -> bool:
+        """Reset obstacle detection state"""
+        self.state.obstacle_detected = False
+        self.obstacle_event.clear()
+        logger.info("Obstacle detection reset")
+        return True
+    
+    def set_speed(self, speed: int) -> bool:
+        """Set default movement speed"""
+        if 0 <= speed <= 100:
+            self.config.default_speed = speed
+            logger.info(f"Default speed set to {speed}")
+            return True
         return False
     
-    directions = {
-        "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
-        "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
-        "stop": ["stop", "halt", "stand still", "brake", "freeze"],
-        "turnLeft": ["turn left", "rotate left", "spin left"],
-        "turnRight": ["turn right", "rotate right", "spin right"],
-        "moveLeft": ["move left", "strafe left", "slide left", "sidestep left"],
-        "moveRight": ["move right", "strafe right", "slide right", "sidestep right"]
-    }
-    
-    time_patterns = {
-        "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
-        "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
-        "hours": r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?"
-    }
-    
-    def get_direction(text: str) -> Optional[str]:
-        """Extract movement direction from text"""
-        text = text.lower()
-        for direction, phrases in directions.items():
-            if any(phrase in text for phrase in phrases):
-                return direction
-        return None
-    
-    def convert_to_milliseconds(text: str) -> Optional[int]:
-        """Convert time expressions to milliseconds"""
-        text = text.lower()
+    def parse_command(self, command: str) -> Optional[Tuple[MovementDirection, Optional[int]]]:
+        """Parse natural language command to movement direction and duration"""
+        command = command.lower().strip()
+        
+        directions = {
+            "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
+            "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
+            "stop": ["stop", "halt", "stand still", "brake", "freeze"],
+            "turnLeft": ["turn left", "rotate left", "spin left"],
+            "turnRight": ["turn right", "rotate right", "spin right"],
+            "moveLeft": ["move left", "strafe left", "slide left", "sidestep left"],
+            "moveRight": ["move right", "strafe right", "slide right", "sidestep right"]
+        }
+        
+        time_patterns = {
+            "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
+            "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
+            "hours": r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?"
+        }
+        
+        # Find direction
+        direction = None
+        for dir_key, phrases in directions.items():
+            if any(phrase in command for phrase in phrases):
+                direction = MovementDirection(dir_key)
+                break
+        
+        # Find duration
+        duration_ms = None
         for unit, pattern in time_patterns.items():
-            match = re.search(pattern, text)
+            match = re.search(pattern, command)
             if match:
                 value = float(match.group(1))
                 if unit == "seconds":
-                    return int(value * 1000)
+                    duration_ms = int(value * 1000)
                 elif unit == "minutes":
-                    return int(value * 60000)
+                    duration_ms = int(value * 60000)
                 elif unit == "hours":
-                    return int(value * 3600000)
-        return None
-    
-    instructions = [instr.strip() for instr in user_input.split("then")]
-    command_sequence = []
-    has_movement = False
-    
-    robot_controller.return_to_mode_selection = False
-    robot_controller.obstacle_detected = False
-    
-    for instruction in instructions:
-        direction = get_direction(instruction)
-        time_ms = convert_to_milliseconds(instruction)
-        
-        if direction in ["turnLeft", "turnRight"] and time_ms is None:
-            time_ms = 1500
-        
-        if direction and time_ms is not None:
-            command_sequence.append((direction, time_ms))
-            has_movement = True
-        elif direction == "stop":
-            command_sequence.append(("stop", 0))
-            has_movement = True
-    
-    if has_movement:
-        logger.info(f"Executing command sequence: {command_sequence}")
-        for command, duration in command_sequence:
-            robot_controller.command_character = command
-            success = await robot_controller.execute_command(command, duration)
-            robot_controller.command_character = ""
-            
-            if not success or robot_controller.perm_stop or robot_controller.obstacle_detected or robot_controller.return_to_mode_selection or robot_controller.interrupt_event.is_set():
+                    duration_ms = int(value * 3600000)
                 break
-                
-            if duration > 0:
-                await asyncio.sleep(duration / 1000)
         
-        robot_controller.return_to_mode_selection = False
-        robot_controller.obstacle_detected = False
+        return (direction, duration_ms) if direction else None
+    
+    async def execute_command_sequence(self, commands: List[str]) -> bool:
+        """Execute a sequence of commands"""
+        for command in commands:
+            parsed = self.parse_command(command)
+            if parsed:
+                direction, duration = parsed
+                if not self.move(direction, duration_ms=duration):
+                    return False
+                
+                if duration:
+                    await asyncio.sleep(duration / 1000)
+                    
+                if self.state.obstacle_detected:
+                    break
+        
         return True
     
-    # Handle non-movement commands with AI if available
-    if robot_controller.chain:
+    async def chat(self, message: str, context: str = "") -> str:
+        """Chat with AI model"""
+        if not self.ai_chain:
+            return "AI model not available"
+        
         try:
-            result = robot_controller.chain.invoke({"context": context, "question": user_input})
-            logger.info(f"AI response: {result}")
-            return False  # AI response handled, no movement executed
+            result = self.ai_chain.invoke({"context": context, "question": message})
+            return str(result)
         except Exception as e:
-            logger.error(f"AI model error: {e}")
-            return False
+            logger.error(f"AI chat error: {e}")
+            return "Error processing message"
     
-    return False
+    def get_config(self) -> Dict:
+        """Get current configuration"""
+        return {
+            "motor_pins": {
+                "motor1": {"speed": self.config.motor1_speed, "dir": self.config.motor1_dir},
+                "motor2": {"speed": self.config.motor2_speed, "dir": self.config.motor2_dir},
+                "motor3": {"speed": self.config.motor3_speed, "dir": self.config.motor3_dir}
+            },
+            "sensor_pins": {
+                "sensor1": {"trig": self.config.trig1, "echo": self.config.echo1},
+                "sensor2": {"trig": self.config.trig2, "echo": self.config.echo2},
+                "sensor3": {"trig": self.config.trig3, "echo": self.config.echo3}
+            },
+            "settings": {
+                "default_speed": self.config.default_speed,
+                "obstacle_threshold": self.config.obstacle_threshold,
+                "pwm_frequency": self.config.pwm_frequency
+            }
+        }
+    
+    def shutdown(self):
+        """Shutdown robot controller"""
+        logger.info("Shutting down robot controller...")
+        
+        # Signal shutdown
+        self.shutdown_event.set()
+        
+        # Stop all motors
+        self._stop_motors_immediate()
+        
+        # Cleanup GPIO
+        if self.gpio_initialized:
+            try:
+                self.motor1_pwm.stop()
+                self.motor2_pwm.stop()
+                self.motor3_pwm.stop()
+                GPIO.cleanup()
+                logger.info("GPIO cleanup completed")
+            except Exception as e:
+                logger.error(f"GPIO cleanup error: {e}")
+        
+        logger.info("Robot controller shutdown complete")
+
+# Factory function for easy initialization
+def create_robot(config: Optional[RobotConfig] = None) -> RobotController:
+    """Create a robot controller instance"""
+    return RobotController(config)
