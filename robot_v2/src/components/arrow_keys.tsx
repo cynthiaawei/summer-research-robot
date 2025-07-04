@@ -4,10 +4,7 @@ interface RobotStatus {
   status: string;
   message: string;
   obstacle_detected: boolean;
-  obstacle_sensor?: string;  // NEW: Which sensor detected obstacle
-  obstacle_distance?: number;  // NEW: Distance of obstacle
   current_speeds: Record<string, number>;
-  sensor_distances?: Record<string, number>;  // NEW: Individual sensor readings
   last_command: string;
   uptime: number;
   gpio_available?: boolean;
@@ -108,15 +105,6 @@ const ArrowKeys: React.FC = () => {
   const sendStop = () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'stop_command' }));
-    } else {
-      setResponse('WebSocket not connected');
-    }
-  };
-
-  const resetObstacle = () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'reset_obstacle' }));
-      setResponse('Obstacle detection reset');
     } else {
       setResponse('WebSocket not connected');
     }
@@ -253,8 +241,6 @@ const ArrowKeys: React.FC = () => {
           </span>
         </div>
 
-        {/* Remove the big obstacle alert banner */}
-
         <div style={gridStyle}>
           <button 
             style={buttonStyle}
@@ -316,28 +302,6 @@ const ArrowKeys: React.FC = () => {
           >
             STOP
           </button>
-          
-          {status?.obstacle_detected && (
-            <button
-              onClick={resetObstacle}
-              style={{
-                ...stopButtonStyle,
-                background: 'linear-gradient(135deg, #ed8936, #dd6b20)',
-                marginLeft: '1rem'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-2px)';
-                e.currentTarget.style.boxShadow = '0 12px 24px rgba(237, 137, 54, 0.4)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 8px 16px rgba(102, 126, 234, 0.3)';
-              }}
-              title="Reset Obstacle Detection"
-            >
-              RESET
-            </button>
-          )}
         </div>
 
         <div style={{ color: '#333', textAlign: 'center' as const }}>
@@ -374,15 +338,10 @@ const ArrowKeys: React.FC = () => {
                 }}>{status.status}</span></div>
                 <div><strong>Obstacle:</strong> <span style={{
                   color: status.obstacle_detected ? '#e53e3e' : '#38a169'
-                }}>{status.obstacle_detected ? 
-                  `Yes - Sensor ${status.obstacle_sensor === 'front' ? '1' : 
-                                  status.obstacle_sensor === 'left' ? '2' : 
-                                  status.obstacle_sensor === 'right' ? '3' : '?'}` : 'No'}</span></div>
+                }}>{status.obstacle_detected ? 'Yes' : 'No'}</span></div>
                 <div><strong>Last Command:</strong> {status.last_command || 'None'}</div>
                 <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
               </div>
-
-              {/* Remove the obstacle alert banner */}
               {status.gpio_available !== undefined && (
                 <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#718096' }}>
                   GPIO: {status.gpio_available ? 'Available' : 'Simulation Mode'}
@@ -405,7 +364,6 @@ const ArrowKeys: React.FC = () => {
             <li>Press and hold buttons to move</li>
             <li>Release to stop automatically</li>
             <li>Use STOP for emergency halt</li>
-            <li>Sensors: 1=Front, 2=Left, 3=Right</li>
           </ul>
         </div>
       </div>

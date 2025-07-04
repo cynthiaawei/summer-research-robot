@@ -5,10 +5,7 @@ interface RobotStatus {
   status: string;
   message: string;
   obstacle_detected: boolean;
-  obstacle_sensor?: string;
-  obstacle_distance?: number;
   current_speeds: Record<string, number>;
-  sensor_distances?: Record<string, number>;
   last_command: string;
   uptime: number;
 }
@@ -20,7 +17,6 @@ type WSMessage =
   | { type: 'text_command_result'; data: { message: string; success: boolean } }
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
-  | { type: 'obstacle_reset'; data: { message: string; success: boolean } }
   | { type: 'error'; data: { message: string } }
   | { type: 'ping' }
   | { type: 'pong' };
@@ -88,9 +84,6 @@ const TextButton: React.FC = () => {
             break;
           case 'robot_stopped':
             setResponse({ message: msg.data.message, isError: false });
-            break;
-          case 'obstacle_reset':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
             break;
           case 'error':
             setResponse({ message: msg.data.message, isError: true });
@@ -168,15 +161,6 @@ const TextButton: React.FC = () => {
     sendTextCommandViaHTTP(cmd);
   };
 
-  const resetObstacle = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'reset_obstacle' }));
-      setResponse({ message: 'Obstacle reset requested...', isError: false });
-    } else {
-      setResponse({ message: 'WebSocket not connected', isError: true });
-    }
-  };
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -208,53 +192,21 @@ const TextButton: React.FC = () => {
           disabled={isLoading}
         />
 
-        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginBottom: '1rem' }}>
-          <button
-            onClick={handleSubmit}
-            disabled={isLoading || !text.trim()}
-            style={{
-              padding: '0.75rem 2rem',
-              borderRadius: 12,
-              border: 'none',
-              color: 'white',
-              cursor: isLoading || !text.trim() ? 'not-allowed' : 'pointer',
-              fontSize: '1.1rem',
-              fontWeight: '600',
-              transition: 'all 0.3s ease',
-              background: isLoading || !text.trim() ? '#a0aec0' : '#48bb78'
-            }}
-          >
-            {isLoading ? 'Sending…' : 'Send Command'}
-          </button>
-          
-          {status?.obstacle_detected && (
-            <button
-              onClick={resetObstacle}
-              style={{
-                padding: '0.75rem 1.5rem',
-                borderRadius: 12,
-                border: 'none',
-                color: 'white',
-                cursor: 'pointer',
-                fontSize: '1.1rem',
-                fontWeight: '600',
-                transition: 'all 0.3s ease',
-                background: 'linear-gradient(135deg, #ed8936, #dd6b20)'
-              }}
-            >
-              Reset Obstacle
-            </button>
-          )}
-        </div>
+        <button
+          onClick={handleSubmit}
+          disabled={isLoading || !text.trim()}
+          style={{
+            ...styles.button,
+            background: isLoading || !text.trim() ? '#a0aec0' : '#48bb78',
+            cursor: isLoading || !text.trim() ? 'not-allowed' : 'pointer'
+          }}
+        >
+          {isLoading ? 'Sending…' : 'Send Command'}
+        </button>
 
         {response.message && (
           <div style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            border: '2px solid',
-            borderRadius: 12,
-            fontSize: '0.9rem',
-            textAlign: 'left' as const,
+            ...styles.response,
             background: response.isError ? '#fee2e2' : '#d1fae5',
             borderColor: response.isError ? '#f87171' : '#34d399'
           }}>
@@ -273,10 +225,7 @@ const TextButton: React.FC = () => {
               <div><strong>Message:</strong> {status.message}</div>
               <div><strong>Obstacle:</strong> <span style={{
                 color: status.obstacle_detected ? '#e53e3e' : '#38a169'
-              }}>{status.obstacle_detected ? 
-                `Yes - Sensor ${status.obstacle_sensor === 'front' ? '1' : 
-                                status.obstacle_sensor === 'left' ? '2' : 
-                                status.obstacle_sensor === 'right' ? '3' : '?'}` : 'No'}</span></div>
+              }}>{status.obstacle_detected ? 'Yes' : 'No'}</span></div>
               <div><strong>Last Cmd:</strong> {status.last_command || 'None'}</div>
               <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
             </div>
@@ -290,8 +239,6 @@ const TextButton: React.FC = () => {
             <li>"turn left"</li>
             <li>"move backward 1 second"</li>
             <li>"stop"</li>
-            <li>"move left 2 seconds then turn right"</li>
-            <li>Sensors: 1=Front, 2=Left, 3=Right</li>
           </ul>
         </div>
       </div>
@@ -346,12 +293,32 @@ const styles = {
     boxSizing: 'border-box' as const,
     transition: 'all 0.3s ease'
   },
+  button: {
+    padding: '0.75rem 2rem',
+    borderRadius: 12,
+    border: 'none',
+    color: 'white',
+    cursor: 'pointer',
+    fontSize: '1.1rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease',
+    marginBottom: '1rem'
+  },
+  response: {
+    marginTop: '1rem',
+    padding: '1rem',
+    border: '2px solid',
+    borderRadius: 12,
+    fontSize: '0.9rem',
+    textAlign: 'left' as const
+  },
   statusCard: {
     marginTop: '1.5rem',
     padding: '1rem',
     border: '2px solid #e2e8f0',
     borderRadius: 12,
-    textAlign: 'left' as const
+    textAlign: 'left' as const,
+    background: '#f8fafc'
   },
   statusTitle: {
     marginTop: 0,

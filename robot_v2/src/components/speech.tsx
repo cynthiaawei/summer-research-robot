@@ -4,10 +4,7 @@ interface RobotStatus {
   status: string;
   message: string;
   obstacle_detected: boolean;
-  obstacle_sensor?: string;
-  obstacle_distance?: number;
   current_speeds: Record<string, number>;
-  sensor_distances?: Record<string, number>;
   last_command: string;
   uptime: number;
 }
@@ -19,7 +16,6 @@ type WSMessage =
   | { type: 'text_command_result'; data: { message: string; success: boolean } }
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
-  | { type: 'obstacle_reset'; data: { message: string; success: boolean } }
   | { type: 'error'; data: { message: string } }
   | { type: 'ping' }
   | { type: 'pong' };
@@ -152,10 +148,6 @@ const Speech: React.FC = () => {
             setResponse({ message: msg.data.message, isError: false });
             setIsLoading(false);
             break;
-          case 'obstacle_reset':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
-            setIsLoading(false);
-            break;
           case 'error':
             setResponse({ message: msg.data.message, isError: true });
             setIsLoading(false);
@@ -256,22 +248,10 @@ const Speech: React.FC = () => {
     }
   };
 
-  const resetObstacle = () => {
-    if (recognition && listening) {
-      recognition.stop();
-    }
+  const resetTranscript = () => {
     setTranscript('');
     setFinalTranscript('');
     setResponse({ message: '', isError: false });
-  };
-
-  const resetObstacleDetection = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'reset_obstacle' }));
-      setResponse({ message: 'Obstacle reset requested...', isError: false });
-    } else {
-      setResponse({ message: 'WebSocket not connected', isError: true });
-    }
   };
 
   if (!browserSupported) {
@@ -326,23 +306,11 @@ const Speech: React.FC = () => {
           </button>
 
           <button
-            onClick={resetObstacle}
+            onClick={resetTranscript}
             style={styles.resetBtn}
           >
             🔄 Reset
           </button>
-
-          {status?.obstacle_detected && (
-            <button
-              onClick={resetObstacleDetection}
-              style={{
-                ...styles.resetBtn,
-                background: '#ed8936'
-              }}
-            >
-              Clear Obstacle
-            </button>
-          )}
         </div>
 
         <div style={styles.transcript}>
@@ -375,10 +343,7 @@ const Speech: React.FC = () => {
               <div><strong>Message:</strong> {status.message}</div>
               <div><strong>Obstacle:</strong> <span style={{
                 color: status.obstacle_detected ? '#e53e3e' : '#38a169'
-              }}>{status.obstacle_detected ? 
-                `Yes - Sensor ${status.obstacle_sensor === 'front' ? '1' : 
-                                status.obstacle_sensor === 'left' ? '2' : 
-                                status.obstacle_sensor === 'right' ? '3' : '?'}` : 'No'}</span></div>
+              }}>{status.obstacle_detected ? 'Yes' : 'No'}</span></div>
               <div><strong>Last Command:</strong> {status.last_command || 'None'}</div>
               <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
             </div>
@@ -392,7 +357,6 @@ const Speech: React.FC = () => {
             <li>"Turn left"</li>
             <li>"Move backward 2 seconds"</li>
             <li>"Stop"</li>
-            <li>Sensors: 1=Front, 2=Left, 3=Right</li>
           </ul>
         </div>
       </div>

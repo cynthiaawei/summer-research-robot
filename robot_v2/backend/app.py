@@ -320,13 +320,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         "data": {"message": "Robot stopped via WebSocket"}
                     }))
                 
-                elif message_type == "reset_obstacle":
-                    success = robot_movement.reset_obstacle_detection()
-                    await manager.broadcast(json.dumps({
-                        "type": "obstacle_reset",
-                        "data": {"message": "Obstacle detection reset", "success": success}
-                    }))
-                
                 elif message_type == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
                 
