@@ -108,7 +108,7 @@ def main():
             while (time.time() - start_time) < total_time:  # Fixed the condition
                 result, error = read_tfluna(ser)
                 current_time = time.time() - start_time
-                
+                  
                 if result:
                     dist, strength, temp = result
                     success_count += 1
