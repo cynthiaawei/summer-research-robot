@@ -4,8 +4,9 @@ import csv
 import matplotlib.pyplot as plt
 
 def find_serial_port():
-    """Try different serial port names"""
-    ports = ['/dev/serial10', '/dev/ttyS0', '/dev/ttyAMA0']
+    """Try different serial port names for Raspberry Pi"""
+    # Updated port list for Raspberry Pi
+    ports = ['/dev/ttyAMA0', '/dev/ttyS0', '/dev/serial0', '/dev/serial1']
     for port in ports:
         try:
             ser = serial.Serial(port, baudrate=115200, timeout=0.5)
@@ -74,37 +75,48 @@ def read_tfluna(ser):
 def main():
     # Try to open serial port
     ser = find_serial_port()
-    while True:
-        out = input("Should I start Recording: ")
-        if out == 'y':
-            break
-    total_time = 2
-    interval = 0.05
     if not ser:
         print("ERROR: Could not open any serial port!")
+        print("Try running these commands:")
+        print("1. sudo raspi-config -> Interface Options -> Serial Port")
+        print("2. ls /dev/tty* to see available ports")
+        print("3. sudo usermod -a -G dialout $USER")
         return
+    
+    while True:
+        out = input("Should I start Recording (y/n): ")
+        if out.lower() == 'y':
+            break
+    
+    total_time = 2
+    interval = 0.05
     
     print("TF-Luna LiDAR Reader - Press Ctrl+C to stop")
     print("-" * 50)
     
     success_count = 0
     error_count = 0
-    start=time.time()
-    times=[]
-    distances=[]
+    start_time = time.time()  # Fixed variable name
+    times = []
+    distances = []
+    
     with open('file.csv', 'w', newline='') as f:
         csvwriter = csv.writer(f)
+        csvwriter.writerow(['Distance', 'Strength', 'Temperature', 'Time'])  # Header row
+        
         try:
-            while (time.time-start)<total_time:
+            while (time.time() - start_time) < total_time:  # Fixed the condition
                 result, error = read_tfluna(ser)
-                t=time.time()-start
+                current_time = time.time() - start_time
+                
                 if result:
                     dist, strength, temp = result
                     success_count += 1
                     print(f"✓ Distance: {dist:4d} cm | Strength: {strength:4d} | Temp: {temp:5.1f}°C | Success: {success_count}")
-                    times.append(t)
+                    times.append(current_time)
                     distances.append(dist)
-                    csvwriter.writerow([dist, strength, f"{temp:.1f}", f"{t:.2f}"])
+                    csvwriter.writerow([dist, strength, f"{temp:.1f}", f"{current_time:.2f}"])
+                    
                     # Check for reasonable values
                     if dist == 0 or dist > 8000:
                         print(f"  ⚠ Warning: Distance {dist}cm seems unusual")
@@ -123,19 +135,22 @@ def main():
                 
                 time.sleep(interval)
                 
-                
         except KeyboardInterrupt:
             print(f"\nStopped. Success: {success_count}, Errors: {error_count}")
         
         ser.close()
-        plt.plot(times, distances)
-        plt.xlabel('Time (s)')
-        plt.ylabel('Distance (cm)')
-        plt.title('TF-Luna Distance vs Time')
-        plt.tight_layout()
-        plt.show()
-
-
+        
+        # Plot results if we have data
+        if times and distances:
+            plt.plot(times, distances)
+            plt.xlabel('Time (s)')
+            plt.ylabel('Distance (cm)')
+            plt.title('TF-Luna Distance vs Time')
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
+        else:
+            print("No data collected for plotting")
 
 if __name__ == "__main__":
     main()
