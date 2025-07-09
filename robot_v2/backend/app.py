@@ -1,6 +1,7 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+# enhanced_app.py - FastAPI backend with face recognition and speech capabilities
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
@@ -9,17 +10,21 @@ import logging
 import os
 from typing import Dict, List, Optional
 import uvicorn
+import io
 
-# Import robot_movement
-import robot_movement
+# Import enhanced robot movement
+import robot_movement as robot_movement
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Robot Control API", description="Web interface for omni-wheel robot control")
+app = FastAPI(
+    title="Enhanced Robot Control API", 
+    description="Web interface for omni-wheel robot with face recognition and speech"
+)
 
-# Enable CORS for frontend
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -39,7 +44,20 @@ class TextCommand(BaseModel):
 class DirectionCommand(BaseModel):
     direction: str
 
-class RobotStatusResponse(BaseModel):
+class SpeechCommand(BaseModel):
+    text: str
+
+class UserRegistration(BaseModel):
+    name: str
+
+class InteractionMode(BaseModel):
+    mode: str  # speech, text, keyboard, auto
+
+class ConversationRequest(BaseModel):
+    mode: str  # speech, text, auto
+    message: Optional[str] = None
+
+class EnhancedRobotStatusResponse(BaseModel):
     status: str
     message: str
     obstacle_detected: bool
@@ -48,17 +66,29 @@ class RobotStatusResponse(BaseModel):
     last_command: str
     uptime: float
     gpio_available: bool
+    # Enhanced fields
+    current_user: str
+    faces_detected: List[str]
+    hand_gesture: str
+    camera_active: bool
+    last_speech_output: str
+    listening: bool
+    speech_recognition_active: bool
+    interaction_mode: str
+    face_recognition_available: bool
+    speech_recognition_available: bool
+    mediapipe_available: bool
 
 # Global state
 robot_movement_available = True
 background_task_created = False
 
-# Check if robot_movement is available
+# Check if enhanced robot movement is available
 try:
-    robot_movement.get_status()  # Test if module is functional
-    logger.info("Robot movement module initialized successfully")
+    robot_movement.get_status()
+    logger.info("Enhanced robot movement module initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize robot movement module: {e}")
+    logger.error(f"Failed to initialize enhanced robot movement module: {e}")
     robot_movement_available = False
 
 # WebSocket connection manager
@@ -101,10 +131,10 @@ manager = ConnectionManager()
 
 # Status update broadcaster
 async def broadcast_status():
-    """Broadcast robot status to all connected clients"""
+    """Broadcast enhanced robot status to all connected clients"""
     while True:
         try:
-            if len(manager.active_connections) > 0:  # Only broadcast if there are connections
+            if len(manager.active_connections) > 0:
                 if robot_movement_available:
                     status = robot_movement.get_status()
                     await manager.broadcast(json.dumps({
@@ -116,13 +146,24 @@ async def broadcast_status():
                         "type": "status_update",
                         "data": {
                             "status": "error",
-                            "message": "Robot movement module not available",
+                            "message": "Enhanced robot movement module not available",
                             "obstacle_detected": False,
                             "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
                             "last_distances": [],
                             "last_command": "",
                             "uptime": 0.0,
-                            "gpio_available": False
+                            "gpio_available": False,
+                            "current_user": "Unknown",
+                            "faces_detected": [],
+                            "hand_gesture": "none",
+                            "camera_active": False,
+                            "last_speech_output": "",
+                            "listening": False,
+                            "speech_recognition_active": False,
+                            "interaction_mode": "idle",
+                            "face_recognition_available": False,
+                            "speech_recognition_available": False,
+                            "mediapipe_available": False
                         }
                     }))
             await asyncio.sleep(0.5)
@@ -139,6 +180,13 @@ async def startup_event():
         background_task_created = True
         logger.info("Background status broadcaster started")
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on app shutdown"""
+    if robot_movement_available:
+        robot_movement.shutdown_robot()
+        logger.info("Robot controller shutdown completed")
+
 @app.get("/")
 async def read_root():
     """Serve the React frontend"""
@@ -149,12 +197,12 @@ async def read_root():
 
 @app.get("/api/status")
 async def get_status():
-    """Get current robot status"""
+    """Get current enhanced robot status"""
     if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     try:
         status_data = robot_movement.get_status()
-        return RobotStatusResponse(**status_data)
+        return EnhancedRobotStatusResponse(**status_data)
     except Exception as e:
         logger.error(f"Error getting status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -163,7 +211,7 @@ async def get_status():
 async def execute_command(command: Command):
     """Execute a robot command"""
     if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
     try:
         success = robot_movement.move(command.command.lower(), duration_ms=command.duration)
@@ -186,7 +234,7 @@ async def execute_command(command: Command):
 async def process_text_command(text_command: TextCommand):
     """Process natural language text command"""
     if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
     try:
         parsed = robot_movement.parse_command(text_command.text)
@@ -196,7 +244,7 @@ async def process_text_command(text_command: TextCommand):
             response = f"Command '{text_command.text}' executed successfully" if success else f"Command '{text_command.text}' failed"
         else:
             response = await robot_movement.chat(text_command.text)
-            success = True  # Chat responses are considered successful
+            success = True
         
         await manager.broadcast(json.dumps({
             "type": "text_command_processed",
@@ -208,11 +256,166 @@ async def process_text_command(text_command: TextCommand):
         logger.error(f"Error processing text command: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/speak")
+async def make_robot_speak(speech_command: SpeechCommand):
+    """Make robot speak text"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        success = robot_movement.speak(speech_command.text)
+        
+        await manager.broadcast(json.dumps({
+            "type": "speech_output",
+            "data": {"text": speech_command.text, "success": success}
+        }))
+        
+        return {"success": success, "message": f"{'Spoke' if success else 'Failed to speak'}: {speech_command.text}"}
+    except Exception as e:
+        logger.error(f"Error making robot speak: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/listen")
+async def listen_for_speech(timeout: int = 5):
+    """Listen for speech input"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        # Notify clients that listening started
+        await manager.broadcast(json.dumps({
+            "type": "listening_started",
+            "data": {"timeout": timeout}
+        }))
+        
+        speech_text = robot_movement.listen_for_speech(timeout)
+        
+        # Notify clients of result
+        await manager.broadcast(json.dumps({
+            "type": "speech_input",
+            "data": {"text": speech_text, "success": speech_text is not None}
+        }))
+        
+        if speech_text:
+            return {"success": True, "text": speech_text, "message": f"Heard: {speech_text}"}
+        else:
+            return {"success": False, "text": None, "message": "No speech detected or recognition failed"}
+    except Exception as e:
+        logger.error(f"Error listening for speech: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/recognize-user")
+async def recognize_user(mode: str = "auto"):
+    """Recognize current user using face recognition"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        user = robot_movement.recognize_user(mode)
+        
+        await manager.broadcast(json.dumps({
+            "type": "user_recognized",
+            "data": {"user": user, "success": user is not None}
+        }))
+        
+        if user:
+            return {"success": True, "user": user, "message": f"Recognized user: {user}"}
+        else:
+            return {"success": False, "user": None, "message": "No user recognized"}
+    except Exception as e:
+        logger.error(f"Error recognizing user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/register-user")
+async def register_user(user_registration: UserRegistration):
+    """Register a new user with face recognition"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        success = robot_movement.register_new_user(user_registration.name)
+        
+        await manager.broadcast(json.dumps({
+            "type": "user_registered",
+            "data": {"name": user_registration.name, "success": success}
+        }))
+        
+        if success:
+            return {"success": True, "message": f"User {user_registration.name} registered successfully"}
+        else:
+            return {"success": False, "message": f"Failed to register user {user_registration.name}"}
+    except Exception as e:
+        logger.error(f"Error registering user: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/interaction-mode")
+async def set_interaction_mode(interaction_mode: InteractionMode):
+    """Set robot interaction mode"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        success = robot_movement.set_interaction_mode(interaction_mode.mode)
+        
+        await manager.broadcast(json.dumps({
+            "type": "interaction_mode_changed",
+            "data": {"mode": interaction_mode.mode, "success": success}
+        }))
+        
+        if success:
+            return {"success": True, "message": f"Interaction mode set to {interaction_mode.mode}"}
+        else:
+            return {"success": False, "message": f"Failed to set interaction mode to {interaction_mode.mode}"}
+    except Exception as e:
+        logger.error(f"Error setting interaction mode: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/conversation")
+async def handle_conversation(conversation_request: ConversationRequest):
+    """Handle conversation in specified mode"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        response = await robot_movement.handle_conversation_mode(conversation_request.mode)
+        
+        await manager.broadcast(json.dumps({
+            "type": "conversation_response",
+            "data": {"mode": conversation_request.mode, "response": response}
+        }))
+        
+        return {"success": True, "mode": conversation_request.mode, "response": response}
+    except Exception as e:
+        logger.error(f"Error handling conversation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/camera/stream")
+async def camera_stream():
+    """Stream camera feed"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    def generate_frames():
+        while True:
+            try:
+                frame_bytes = robot_movement.get_camera_frame()
+                if frame_bytes:
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                else:
+                    # Send a blank frame if camera is not available
+                    break
+            except Exception as e:
+                logger.error(f"Camera streaming error: {e}")
+                break
+    
+    return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
 @app.post("/api/direction")
 async def move_direction(direction_command: DirectionCommand):
     """Move robot in specified direction"""
     if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
     try:
         success = robot_movement.move(direction_command.direction.lower())
@@ -234,7 +437,7 @@ async def move_direction(direction_command: DirectionCommand):
 async def stop_robot():
     """Stop robot immediately"""
     if not robot_movement_available:
-        raise HTTPException(status_code=503, detail="Robot movement module not available")
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
     try:
         success = robot_movement.stop()
@@ -251,7 +454,7 @@ async def stop_robot():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time communication"""
+    """Enhanced WebSocket endpoint for real-time communication"""
     await manager.connect(websocket)
     
     try:
@@ -272,7 +475,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if not robot_movement_available:
                 await websocket.send_text(json.dumps({
                     "type": "error",
-                    "data": {"message": "Robot movement module not available"}
+                    "data": {"message": "Enhanced robot movement module not available"}
                 }))
                 continue
             
@@ -313,11 +516,89 @@ async def websocket_endpoint(websocket: WebSocket):
                             "data": {"message": "No text specified"}
                         }))
                 
+                elif message_type == "speech_command":
+                    text = payload.get("text", "")
+                    if text:
+                        success = robot_movement.speak(text)
+                        await manager.broadcast(json.dumps({
+                            "type": "speech_output",
+                            "data": {"text": text, "success": success}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No speech text specified"}
+                        }))
+                
+                elif message_type == "listen_command":
+                    timeout = payload.get("timeout", 5)
+                    await manager.broadcast(json.dumps({
+                        "type": "listening_started",
+                        "data": {"timeout": timeout}
+                    }))
+                    
+                    speech_text = robot_movement.listen_for_speech(timeout)
+                    await manager.broadcast(json.dumps({
+                        "type": "speech_input",
+                        "data": {"text": speech_text, "success": speech_text is not None}
+                    }))
+                
+                elif message_type == "recognize_user":
+                    mode = payload.get("mode", "auto")
+                    user = robot_movement.recognize_user(mode)
+                    await manager.broadcast(json.dumps({
+                        "type": "user_recognized",
+                        "data": {"user": user, "success": user is not None}
+                    }))
+                
+                elif message_type == "register_user":
+                    name = payload.get("name", "")
+                    if name:
+                        success = robot_movement.register_new_user(name)
+                        await manager.broadcast(json.dumps({
+                            "type": "user_registered",
+                            "data": {"name": name, "success": success}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No name specified"}
+                        }))
+                
+                elif message_type == "set_interaction_mode":
+                    mode = payload.get("mode", "")
+                    if mode:
+                        success = robot_movement.set_interaction_mode(mode)
+                        await manager.broadcast(json.dumps({
+                            "type": "interaction_mode_changed",
+                            "data": {"mode": mode, "success": success}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No mode specified"}
+                        }))
+                
+                elif message_type == "conversation_mode":
+                    mode = payload.get("mode", "auto")
+                    response = await robot_movement.handle_conversation_mode(mode)
+                    await manager.broadcast(json.dumps({
+                        "type": "conversation_response",
+                        "data": {"mode": mode, "response": response}
+                    }))
+                
                 elif message_type == "stop_command":
                     success = robot_movement.stop()
                     await manager.broadcast(json.dumps({
                         "type": "robot_stopped",
                         "data": {"message": "Robot stopped via WebSocket"}
+                    }))
+                
+                elif message_type == "reset_obstacle":
+                    success = robot_movement.reset_obstacle_detection()
+                    await manager.broadcast(json.dumps({
+                        "type": "obstacle_reset",
+                        "data": {"message": "Obstacle detection reset", "success": success}
                     }))
                 
                 elif message_type == "ping":
@@ -352,11 +633,17 @@ async def websocket_endpoint(websocket: WebSocket):
 # Health check endpoint
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
+    """Enhanced health check endpoint"""
     return {
         "status": "healthy",
         "robot_available": robot_movement_available,
-        "active_connections": len(manager.active_connections)
+        "active_connections": len(manager.active_connections),
+        "features": {
+            "face_recognition": robot_movement.get_status().get("face_recognition_available", False) if robot_movement_available else False,
+            "speech_recognition": robot_movement.get_status().get("speech_recognition_available", False) if robot_movement_available else False,
+            "hand_detection": robot_movement.get_status().get("mediapipe_available", False) if robot_movement_available else False,
+            "camera": robot_movement.get_status().get("camera_active", False) if robot_movement_available else False
+        }
     }
 
 # Serve static files (React frontend)
@@ -378,10 +665,16 @@ if __name__ == "__main__":
     # Create frontend directory if it doesn't exist
     os.makedirs("frontend/build", exist_ok=True)
     
-    print("🚀 Starting Robot Control Web Server...")
+    print("🚀 Starting Enhanced Robot Control Web Server...")
     print("📡 Server will be available at: http://localhost:8000")
-    print("🤖 Robot control interface ready!")
-    print(f"🔧 Robot movement module: {'Available' if robot_movement_available else 'Not Available (Simulation Mode)'}")
+    print("🤖 Enhanced robot control interface ready!")
+    print("✨ New Features:")
+    print("   • Face Recognition & User Management")
+    print("   • Speech Synthesis & Recognition") 
+    print("   • Hand Gesture Detection")
+    print("   • Camera Streaming")
+    print("   • Enhanced AI Conversations")
+    print(f"🔧 Enhanced robot movement module: {'Available' if robot_movement_available else 'Not Available (Simulation Mode)'}")
     
     uvicorn.run(
         app,
