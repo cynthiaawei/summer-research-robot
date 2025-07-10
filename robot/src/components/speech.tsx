@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { UserHeader } from './UserContext';
 
-interface RobotStatus {
+interface EnhancedRobotStatus {
   status: string;
   message: string;
   obstacle_detected: boolean;
@@ -10,14 +11,30 @@ interface RobotStatus {
   sensor_distances?: Record<string, number>;
   last_command: string;
   uptime: number;
+  gpio_available?: boolean;
+  // Enhanced fields
+  current_user: string;
+  faces_detected: string[];
+  hand_gesture: string;
+  camera_active: boolean;
+  last_speech_output: string;
+  listening: boolean;
+  speech_recognition_active: boolean;
+  interaction_mode: string;
+  face_recognition_available: boolean;
+  speech_recognition_available: boolean;
+  mediapipe_available: boolean;
 }
 
-// Discriminated union for messages from FastAPI WS endpoint
 type WSMessage =
-  | { type: 'status_update'; data: RobotStatus }
-  | { type: 'text_command_processed'; data: { message: string; success: boolean } }
-  | { type: 'text_command_result'; data: { message: string; success: boolean } }
-  | { type: 'direction_executed'; data: { direction: string; success: boolean } }
+  | { type: 'status_update'; data: EnhancedRobotStatus }
+  | { type: 'speech_output'; data: { text: string; success: boolean } }
+  | { type: 'speech_input'; data: { text: string | null; success: boolean } }
+  | { type: 'listening_started'; data: { timeout: number } }
+  | { type: 'user_recognized'; data: { user: string | null; success: boolean } }
+  | { type: 'user_registered'; data: { name: string; success: boolean } }
+  | { type: 'conversation_response'; data: { mode: string; response: string } }
+  | { type: 'text_command_result'; data: { text: string; success: boolean; message: string } }
   | { type: 'robot_stopped'; data: { message: string } }
   | { type: 'obstacle_reset'; data: { message: string; success: boolean } }
   | { type: 'error'; data: { message: string } }
@@ -32,13 +49,28 @@ const Speech: React.FC = () => {
   const [browserSupported, setBrowserSupported] = useState(false);
   
   const [response, setResponse] = useState<{ message: string; isError: boolean }>({ message: '', isError: false });
-  const [status, setStatus] = useState<RobotStatus | null>(null);
+  const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 5;
 
-  // Use a ref so we always send on the latest socket
+  // Enhanced state
+  const [speechText, setSpeechText] = useState('');
+  const [userRegistrationName, setUserRegistrationName] = useState('');
+  const [conversationHistory, setConversationHistory] = useState<string[]>([]);
+  const [showCamera, setShowCamera] = useState(false);
+  const [autoMode, setAutoMode] = useState(false);
+
   const socketRef = useRef<WebSocket | null>(null);
+  const cameraRef = useRef<HTMLImageElement>(null);
+  const mountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Initialize speech recognition
   useEffect(() => {
@@ -93,7 +125,7 @@ const Speech: React.FC = () => {
     } else {
       setBrowserSupported(false);
     }
-  }, []);
+  }, [finalTranscript]);
 
   // WebSocket connection
   useEffect(() => {
@@ -101,6 +133,8 @@ const Speech: React.FC = () => {
     let reconnectTimer: number;
 
     const connect = () => {
+      if (!mountedRef.current) return;
+      
       if (retryCount >= maxRetries) {
         setResponse({ message: 'Max WS retries reached', isError: true });
         return;
@@ -110,11 +144,11 @@ const Speech: React.FC = () => {
       socketRef.current = ws;
 
       ws.onopen = () => {
+        if (!mountedRef.current) return;
         console.log('WebSocket connected');
-        setResponse({ message: 'Connected to robot', isError: false });
+        setResponse({ message: 'Connected to enhanced robot', isError: false });
         setRetryCount(0);
 
-        // Heartbeat
         pingId = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'ping' }));
@@ -123,6 +157,8 @@ const Speech: React.FC = () => {
       };
 
       ws.onmessage = (event) => {
+        if (!mountedRef.current) return;
+        
         let msg: WSMessage;
         try {
           msg = JSON.parse(event.data);
@@ -136,16 +172,53 @@ const Speech: React.FC = () => {
           case 'status_update':
             setStatus(msg.data);
             break;
-          case 'text_command_processed':
-          case 'text_command_result':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
+          case 'speech_output':
+            const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
+            setResponse({ message: speechMsg, isError: !msg.data.success });
+            addToConversationHistory(speechMsg);
             setIsLoading(false);
             break;
-          case 'direction_executed':
-            setResponse({
-              message: `Direction ${msg.data.direction} ${msg.data.success ? 'succeeded' : 'failed'}`,
-              isError: !msg.data.success
-            });
+          case 'speech_input':
+            if (msg.data.success && msg.data.text) {
+              const heardMsg = `👂 Heard: "${msg.data.text}"`;
+              setResponse({ message: heardMsg, isError: false });
+              addToConversationHistory(heardMsg);
+              // Auto-process the speech command
+              handleWebSocketSpeechCommand(msg.data.text);
+            } else {
+              setResponse({ message: '❌ No speech detected', isError: true });
+            }
+            setIsLoading(false);
+            break;
+          case 'listening_started':
+            setResponse({ message: `🎤 Listening for ${msg.data.timeout} seconds...`, isError: false });
+            break;
+          case 'user_recognized':
+            if (msg.data.success && msg.data.user) {
+              const userMsg = `👤 User recognized: ${msg.data.user}`;
+              setResponse({ message: userMsg, isError: false });
+              addToConversationHistory(userMsg);
+            } else {
+              setResponse({ message: '❓ No user recognized', isError: true });
+            }
+            break;
+          case 'user_registered':
+            const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
+            setResponse({ message: regMsg, isError: !msg.data.success });
+            addToConversationHistory(regMsg);
+            if (msg.data.success) {
+              setUserRegistrationName('');
+            }
+            break;
+          case 'conversation_response':
+            const convMsg = `💬 Robot: ${msg.data.response}`;
+            setResponse({ message: convMsg, isError: false });
+            addToConversationHistory(convMsg);
+            setIsLoading(false);
+            break;
+          case 'text_command_result':
+            setResponse({ message: msg.data.message, isError: !msg.data.success });
+            addToConversationHistory(`📋 Command: ${msg.data.message}`);
             setIsLoading(false);
             break;
           case 'robot_stopped':
@@ -160,7 +233,6 @@ const Speech: React.FC = () => {
             setResponse({ message: msg.data.message, isError: true });
             setIsLoading(false);
             break;
-          // ignore ping/pong
         }
       };
 
@@ -171,6 +243,8 @@ const Speech: React.FC = () => {
       };
 
       ws.onclose = () => {
+        if (!mountedRef.current) return;
+        
         console.warn('WebSocket closed, retrying...');
         clearInterval(pingId);
         reconnectTimer = window.setTimeout(() => {
@@ -187,21 +261,24 @@ const Speech: React.FC = () => {
     };
   }, [retryCount]);
 
-  // Fallback HTTP for natural-language commands
-  const sendTextCommandViaHTTP = async (text: string) => {
-    try {
-      const response = await fetch(`http://${window.location.hostname}:8000/api/text-command`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      
-      const data = await response.json();
-      setResponse({ message: data.message, isError: !data.success });
-    } catch (err) {
-      setResponse({ message: 'Error sending command', isError: true });
-    } finally {
-      setIsLoading(false);
+  // Camera stream setup
+  useEffect(() => {
+    if (showCamera && cameraRef.current) {
+      const img = cameraRef.current;
+      img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+    }
+  }, [showCamera]);
+
+  const addToConversationHistory = (message: string) => {
+    if (!mountedRef.current) return;
+    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
+  };
+
+  const sendWebSocketMessage = (type: string, data: any = {}) => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type, data }));
+    } else {
+      setResponse({ message: 'WebSocket not connected', isError: true });
     }
   };
 
@@ -214,32 +291,17 @@ const Speech: React.FC = () => {
       return;
     }
 
-    const lower = trimmed.toLowerCase();
-    const dirs = ['forward', 'backward', 'left', 'right', 'up', 'down'];
-    const isMove = dirs.some(d => lower.includes(`go ${d}`) || lower.includes(`move ${d}`));
-    const isStop = lower.includes('stop');
+    addToConversationHistory(`🗣️ You said: "${trimmed}"`);
+    
+    // Send to robot for processing
+    sendWebSocketMessage('text_command', { text: trimmed.toLowerCase() });
+  };
 
-    if (isMove) {
-      const dir = dirs.find(d => lower.includes(d));
-      if (dir && socketRef.current?.readyState === WebSocket.OPEN) {
-        const mappedDir = dir === 'up' ? 'forward' : dir === 'down' ? 'backward' : dir;
-        socketRef.current.send(JSON.stringify({ 
-          type: 'direction_command', 
-          data: { direction: mappedDir } 
-        }));
-        setIsLoading(false);
-        return;
-      }
+  const handleWebSocketSpeechCommand = (text: string) => {
+    if (text) {
+      addToConversationHistory(`🗣️ You said: "${text}"`);
+      sendWebSocketMessage('text_command', { text: text.toLowerCase() });
     }
-
-    if (isStop && socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'stop_command' }));
-      setIsLoading(false);
-      return;
-    }
-
-    // otherwise, HTTP fallback
-    sendTextCommandViaHTTP(lower);
   };
 
   const startListening = () => {
@@ -250,35 +312,57 @@ const Speech: React.FC = () => {
     }
   };
 
+  const startWebSocketListening = () => {
+    setIsLoading(true);
+    sendWebSocketMessage('listen_command', { timeout: 5 });
+  };
+
   const stopListening = () => {
     if (recognition && listening) {
       recognition.stop();
     }
   };
 
-  const resetObstacle = () => {
-    if (recognition && listening) {
-      recognition.stop();
+  const sendSpeech = () => {
+    if (speechText.trim()) {
+      setIsLoading(true);
+      addToConversationHistory(`📢 Making robot say: "${speechText}"`);
+      sendWebSocketMessage('speech_command', { text: speechText.trim() });
+      setSpeechText('');
     }
-    setTranscript('');
-    setFinalTranscript('');
-    setResponse({ message: '', isError: false });
   };
 
-  const resetObstacleDetection = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type: 'reset_obstacle' }));
-      setResponse({ message: 'Obstacle reset requested...', isError: false });
-    } else {
-      setResponse({ message: 'WebSocket not connected', isError: true });
+  const recognizeUser = () => {
+    sendWebSocketMessage('recognize_user', { mode: 'speech' });
+  };
+
+  const registerUser = () => {
+    if (userRegistrationName.trim()) {
+      sendWebSocketMessage('register_user', { name: userRegistrationName.trim() });
     }
+  };
+
+  const startConversation = () => {
+    setIsLoading(true);
+    sendWebSocketMessage('conversation_mode', { mode: 'speech' });
+  };
+
+  const toggleAutoMode = () => {
+    const newMode = !autoMode;
+    setAutoMode(newMode);
+    sendWebSocketMessage('set_interaction_mode', { mode: newMode ? 'auto' : 'speech' });
+  };
+
+  const clearHistory = () => {
+    setConversationHistory([]);
   };
 
   if (!browserSupported) {
     return (
       <div style={styles.container}>
+        <UserHeader />
         <div style={styles.card}>
-          <h2 style={styles.title}>Speech Control</h2>
+          <h2 style={styles.title}>Enhanced Speech Control</h2>
           <div style={styles.errorMessage}>
             <span style={{ color: '#e53e3e', fontSize: '1.1rem' }}>
               ❌ Your browser doesn't support speech recognition
@@ -294,64 +378,166 @@ const Speech: React.FC = () => {
 
   return (
     <div style={styles.container}>
-      {/* heartbeat animation */}
       <style>{`@keyframes pulse {0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}`}</style>
 
+      <UserHeader />
+
       <div style={styles.card}>
-        <h2 style={styles.title}>Voice Control</h2>
-        <p style={styles.subtitle}>Speak commands to control your robot</p>
+        <h2 style={styles.title}>Enhanced Voice Control</h2>
+        <p style={styles.subtitle}>Advanced speech interaction with face recognition</p>
 
-        <div style={styles.statusContainer}>
-          <span style={styles.statusText}>
-            Microphone: {listening ? 'Listening...' : 'Ready'} 
-          </span>
-          <span
-            style={{
-              ...styles.indicator,
-              background: listening ? '#48bb78' : '#e53e3e'
-            }}
-          />
-        </div>
-
-        <div style={styles.buttonContainer}>
-          <button
-            onClick={listening ? stopListening : startListening}
-            style={{
-              ...styles.toggleBtn,
-              background: listening ? '#f56565' : '#48bb78'
-            }}
-            disabled={isLoading}
-          >
-            {listening ? '🎤 Stop Listening' : '🎤 Start Listening'}
-          </button>
-
-          <button
-            onClick={resetObstacle}
-            style={styles.resetBtn}
-          >
-            🔄 Reset
-          </button>
-
-          {status?.obstacle_detected && (
+        {/* Camera Controls */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>👁️ Camera & Recognition</h3>
+          <div style={styles.buttonRow}>
             <button
-              onClick={resetObstacleDetection}
-              style={{
-                ...styles.resetBtn,
-                background: '#ed8936'
-              }}
+              onClick={() => setShowCamera(!showCamera)}
+              style={showCamera ? styles.activeBtn : styles.primaryBtn}
             >
-              Clear Obstacle
+              {showCamera ? '📷 Hide Camera' : '📷 Show Camera'}
             </button>
+            <button onClick={recognizeUser} style={styles.secondaryBtn}>
+              👤 Recognize Me
+            </button>
+            <button
+              onClick={toggleAutoMode}
+              style={autoMode ? styles.activeBtn : styles.secondaryBtn}
+            >
+              {autoMode ? '🤖 Auto Mode ON' : '🤖 Auto Mode OFF'}
+            </button>
+          </div>
+          
+          {showCamera && (
+            <div style={styles.cameraContainer}>
+              <img
+                ref={cameraRef}
+                alt="Robot Camera Feed"
+                style={styles.cameraFeed}
+              />
+            </div>
           )}
+
+          <div style={styles.userInfo}>
+            <span><strong>Current User:</strong> {status?.current_user || 'Unknown'}</span>
+            <span><strong>Hand Gesture:</strong> {status?.hand_gesture || 'none'}</span>
+          </div>
         </div>
 
+        {/* User Registration */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>📝 User Registration</h3>
+          <div style={styles.inputRow}>
+            <input
+              type="text"
+              placeholder="Enter your name to register"
+              value={userRegistrationName}
+              onChange={(e) => setUserRegistrationName(e.target.value)}
+              style={styles.input}
+            />
+            <button onClick={registerUser} style={styles.primaryBtn}>
+              Register New User
+            </button>
+          </div>
+        </div>
+
+        {/* Speech Controls */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>🎤 Speech Controls</h3>
+          <div style={styles.statusContainer}>
+            <span style={styles.statusText}>
+              Microphone: {listening || status?.listening ? 'Listening...' : 'Ready'} 
+            </span>
+            <span
+              style={{
+                ...styles.indicator,
+                background: listening || status?.listening ? '#48bb78' : '#e53e3e'
+              }}
+            />
+          </div>
+
+          <div style={styles.buttonRow}>
+            <button
+              onClick={listening ? stopListening : startListening}
+              style={{
+                ...styles.toggleBtn,
+                background: listening ? '#f56565' : '#48bb78'
+              }}
+              disabled={isLoading}
+            >
+              {listening ? '🛑 Stop Browser Listening' : '🎤 Start Browser Listening'}
+            </button>
+
+            <button
+              onClick={startWebSocketListening}
+              style={styles.primaryBtn}
+              disabled={isLoading}
+            >
+              🎤 Robot Listen
+            </button>
+
+            <button
+              onClick={startConversation}
+              style={styles.secondaryBtn}
+              disabled={isLoading}
+            >
+              💬 Start Conversation
+            </button>
+          </div>
+        </div>
+
+        {/* Text-to-Speech */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>📢 Make Robot Speak</h3>
+          <div style={styles.inputRow}>
+            <input
+              type="text"
+              placeholder="Enter text for robot to speak"
+              value={speechText}
+              onChange={(e) => setSpeechText(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && sendSpeech()}
+              style={styles.input}
+            />
+            <button
+              onClick={sendSpeech}
+              style={styles.primaryBtn}
+              disabled={isLoading || !speechText.trim()}
+            >
+              🗣️ Speak
+            </button>
+          </div>
+        </div>
+
+        {/* Transcript Display */}
         <div style={styles.transcript}>
           {transcript || finalTranscript || 'Say something to control the robot...'}
           {transcript && <span style={{ color: '#a0aec0' }}> {transcript}</span>}
         </div>
 
+        {/* Conversation History */}
+        <div style={styles.section}>
+          <div style={styles.historyHeader}>
+            <h3 style={styles.sectionTitle}>💬 Conversation History</h3>
+            <button onClick={clearHistory} style={styles.clearBtn}>
+              🗑️ Clear
+            </button>
+          </div>
+          <div style={styles.historyContainer}>
+            {conversationHistory.length === 0 ? (
+              <p style={styles.emptyHistory}>No conversation yet...</p>
+            ) : (
+              conversationHistory.map((msg, index) => (
+                <div key={index} style={styles.historyItem}>
+                  {msg}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Loading Indicator */}
         {isLoading && <div style={styles.loadingMessage}>Processing command…</div>}
         
+        {/* Response Display */}
         {!isLoading && response.message && (
           <div
             style={{
@@ -364,35 +550,52 @@ const Speech: React.FC = () => {
           </div>
         )}
 
+        {/* Enhanced Status Display */}
         {status && (
           <div style={styles.statusCard}>
-            <h3 style={styles.statusTitle}>Robot Status</h3>
+            <h3 style={styles.statusTitle}>🤖 Robot Status</h3>
             <div style={styles.statusGrid}>
               <div><strong>Status:</strong> <span style={{
                 color: status.obstacle_detected ? '#e53e3e' : 
                       status.status === 'moving' ? '#38a169' : '#718096'
               }}>{status.status}</span></div>
-              <div><strong>Message:</strong> {status.message}</div>
-              <div><strong>Obstacle:</strong> <span style={{
-                color: status.obstacle_detected ? '#e53e3e' : '#38a169'
-              }}>{status.obstacle_detected ? 
-                `Yes - Sensor ${status.obstacle_sensor === 'front' ? '1' : 
-                                status.obstacle_sensor === 'left' ? '2' : 
-                                status.obstacle_sensor === 'right' ? '3' : '?'}` : 'No'}</span></div>
-              <div><strong>Last Command:</strong> {status.last_command || 'None'}</div>
-              <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
+              <div><strong>Current User:</strong> {status.current_user}</div>
+              <div><strong>Hand Gesture:</strong> {status.hand_gesture}</div>
+              <div><strong>Interaction Mode:</strong> {status.interaction_mode}</div>
+              <div><strong>Camera:</strong> <span style={{
+                color: status.camera_active ? '#38a169' : '#e53e3e'
+              }}>{status.camera_active ? 'Active' : 'Inactive'}</span></div>
+              <div><strong>Last Speech:</strong> {status.last_speech_output || 'None'}</div>
+            </div>
+            
+            {status.last_speech_output && (
+              <div style={styles.lastSpeech}>
+                <strong>🗣️ Last Robot Speech:</strong> "{status.last_speech_output}"
+              </div>
+            )}
+
+            <div style={styles.featureStatus}>
+              <div><strong>Available Features:</strong></div>
+              <div>Face Recognition: {status.face_recognition_available ? '✅' : '❌'}</div>
+              <div>Speech Recognition: {status.speech_recognition_available ? '✅' : '❌'}</div>
+              <div>Hand Detection: {status.mediapipe_available ? '✅' : '❌'}</div>
+              <div>Camera: {status.camera_active ? '✅' : '❌'}</div>
+              <div>GPIO: {status.gpio_available ? '✅' : '❌'}</div>
             </div>
           </div>
         )}
 
+        {/* Instructions */}
         <div style={styles.examples}>
-          <h4 style={styles.examplesTitle}>Example Voice Commands:</h4>
+          <h4 style={styles.examplesTitle}>📋 How to Use Enhanced Speech Control:</h4>
           <ul style={styles.examplesList}>
-            <li>"Go forward"</li>
-            <li>"Turn left"</li>
-            <li>"Move backward 2 seconds"</li>
-            <li>"Stop"</li>
-            <li>Sensors: 1=Front, 2=Left, 3=Right</li>
+            <li><strong>Face Recognition:</strong> Click "Show Camera" and "Recognize Me" to identify yourself</li>
+            <li><strong>Auto Mode:</strong> Enable for automatic responses to gestures and face recognition</li>
+            <li><strong>Browser Listening:</strong> Uses your browser's speech recognition (works offline)</li>
+            <li><strong>Robot Listen:</strong> Uses robot's advanced speech recognition (requires internet)</li>
+            <li><strong>Voice Commands:</strong> "Go forward", "Turn left", "Move backward 2 seconds", "Stop"</li>
+            <li><strong>Conversations:</strong> Ask questions like "How are you?" or give complex commands</li>
+            <li><strong>Speech Output:</strong> All robot responses are spoken aloud and shown here</li>
           </ul>
         </div>
       </div>
@@ -408,7 +611,8 @@ const styles = {
     display: 'flex' as const,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: '2rem'
+    padding: '2rem',
+    paddingTop: '6rem'
   },
   card: {
     background: 'rgba(255,255,255,0.95)',
@@ -416,8 +620,10 @@ const styles = {
     padding: '2rem',
     boxShadow: '0 20px 40px rgba(0,0,0,0.1)',
     textAlign: 'center' as const,
-    maxWidth: '600px',
-    width: '100%'
+    maxWidth: '800px',
+    width: '100%',
+    maxHeight: '90vh',
+    overflowY: 'auto' as const
   },
   title: {
     fontSize: '2rem',
@@ -430,14 +636,119 @@ const styles = {
     marginBottom: '2rem',
     fontSize: '1.1rem'
   },
+  section: {
+    marginBottom: '2rem',
+    padding: '1rem',
+    background: 'rgba(247, 250, 252, 0.7)',
+    borderRadius: '12px',
+    border: '1px solid rgba(226, 232, 240, 0.5)'
+  },
+  sectionTitle: {
+    fontSize: '1.2rem',
+    fontWeight: '600',
+    color: '#2d3748',
+    marginBottom: '1rem',
+    marginTop: 0
+  },
+  buttonRow: {
+    display: 'flex',
+    gap: '0.5rem',
+    justifyContent: 'center',
+    flexWrap: 'wrap' as const,
+    marginBottom: '1rem'
+  },
+  inputRow: {
+    display: 'flex',
+    gap: '0.5rem',
+    alignItems: 'center',
+    flexWrap: 'wrap' as const
+  },
+  primaryBtn: {
+    padding: '0.75rem 1.5rem',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    background: 'linear-gradient(135deg, #667eea, #764ba2)',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
+  },
+  secondaryBtn: {
+    padding: '0.75rem 1.5rem',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    background: 'linear-gradient(135deg, #48bb78, #38a169)',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
+  },
+  activeBtn: {
+    padding: '0.75rem 1.5rem',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    background: 'linear-gradient(135deg, #ed8936, #dd6b20)',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
+  },
+  toggleBtn: {
+    padding: '0.75rem 1.5rem',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
+  },
+  clearBtn: {
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    border: 'none',
+    cursor: 'pointer',
+    background: '#e53e3e',
+    color: 'white',
+    fontSize: '0.8rem',
+    fontWeight: '600'
+  },
+  input: {
+    flex: 1,
+    padding: '0.75rem',
+    borderRadius: '8px',
+    border: '2px solid #e2e8f0',
+    fontSize: '1rem'
+  },
+  cameraContainer: {
+    marginTop: '1rem',
+    textAlign: 'center' as const
+  },
+  cameraFeed: {
+    maxWidth: '100%',
+    height: 'auto',
+    borderRadius: '12px',
+    border: '2px solid #e2e8f0'
+  },
+  userInfo: {
+    display: 'flex',
+    gap: '2rem',
+    justifyContent: 'center',
+    marginTop: '1rem',
+    fontSize: '0.9rem',
+    color: '#4a5568'
+  },
   statusContainer: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: '1.5rem'
+    marginBottom: '1rem'
   },
   statusText: { 
-    fontSize: '1.1rem',
+    fontSize: '1rem',
     marginRight: '0.5rem',
     color: '#4a5568'
   },
@@ -448,49 +759,50 @@ const styles = {
     borderRadius: '50%',
     animation: 'pulse 2s infinite'
   },
-  buttonContainer: {
-    display: 'flex',
-    gap: '1rem',
-    justifyContent: 'center',
-    marginBottom: '1.5rem',
-    flexWrap: 'wrap' as const
-  },
-  toggleBtn: {
-    padding: '1rem 2rem',
-    borderRadius: 12,
-    border: 'none',
-    cursor: 'pointer',
-    color: 'white',
-    fontSize: '1rem',
-    fontWeight: '600',
-    transition: 'all 0.3s ease'
-  },
-  resetBtn: {
-    padding: '1rem 2rem',
-    borderRadius: 12,
-    border: 'none',
-    cursor: 'pointer',
-    background: '#ed8936',
-    color: 'white',
-    fontSize: '1rem',
-    fontWeight: '600',
-    transition: 'all 0.3s ease'
-  },
   transcript: {
     background: '#f7fafc',
     borderRadius: 12,
     padding: '1.5rem',
-    minHeight: 80,
+    minHeight: 60,
     border: '2px solid #e2e8f0',
     margin: '1rem 0',
-    fontSize: '1.1rem',
+    fontSize: '1rem',
     lineHeight: '1.5',
-    color: '#2d3748'
+    color: '#2d3748',
+    textAlign: 'left' as const
+  },
+  historyHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '1rem'
+  },
+  historyContainer: {
+    maxHeight: '200px',
+    overflowY: 'auto' as const,
+    background: '#f8fafc',
+    borderRadius: '8px',
+    padding: '1rem',
+    textAlign: 'left' as const
+  },
+  historyItem: {
+    padding: '0.5rem 0',
+    borderBottom: '1px solid #e2e8f0',
+    fontSize: '0.9rem',
+    lineHeight: '1.4'
+  },
+  emptyHistory: {
+    textAlign: 'center' as const,
+    color: '#a0aec0',
+    fontStyle: 'italic'
   },
   loadingMessage: {
     color: '#4a5568',
     fontStyle: 'italic',
-    marginBottom: '1rem'
+    marginBottom: '1rem',
+    padding: '1rem',
+    background: '#f0f4f8',
+    borderRadius: '8px'
   },
   response: {
     borderRadius: 12,
@@ -509,7 +821,7 @@ const styles = {
   },
   statusTitle: {
     marginTop: 0,
-    marginBottom: '0.5rem',
+    marginBottom: '1rem',
     fontSize: '1.1rem',
     color: '#2d3748'
   },
@@ -517,7 +829,23 @@ const styles = {
     display: 'grid',
     gridTemplateColumns: '1fr 1fr',
     gap: '0.5rem',
-    fontSize: '0.9rem'
+    fontSize: '0.9rem',
+    marginBottom: '1rem'
+  },
+  lastSpeech: {
+    background: '#e6fffa',
+    padding: '0.75rem',
+    borderRadius: '8px',
+    marginBottom: '1rem',
+    fontSize: '0.9rem',
+    border: '1px solid #38b2ac'
+  },
+  featureStatus: {
+    fontSize: '0.8rem',
+    color: '#718096',
+    background: '#f0f4f8',
+    padding: '0.75rem',
+    borderRadius: '6px'
   },
   examples: {
     marginTop: '2rem',

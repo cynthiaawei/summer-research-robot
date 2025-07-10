@@ -1,13 +1,41 @@
-# robot_movement.py - Complete fixed version with proper threading, error handling, and state management
+# enhanced_robot_movement.py - Extended version with face recognition and speech
 import asyncio
 import re
 import threading
 import time
 import logging
+import cv2
+import os
+import platform
+import subprocess
 from typing import Dict, Optional, List, Tuple, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+from collections import deque
+
+# Import your existing modules
+try:
+    import face_recognition
+    import numpy as np
+    FACE_RECOGNITION_AVAILABLE = True
+except ImportError:
+    FACE_RECOGNITION_AVAILABLE = False
+    logging.warning("Face recognition not available - install face_recognition library")
+
+try:
+    import speech_recognition as sr
+    SPEECH_RECOGNITION_AVAILABLE = True
+except ImportError:
+    SPEECH_RECOGNITION_AVAILABLE = False
+    logging.warning("Speech recognition not available - install SpeechRecognition library")
+
+try:
+    import mediapipe as mp
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+    logging.warning("MediaPipe not available - hand detection disabled")
 
 # Optional imports with graceful fallbacks
 try:
@@ -27,107 +55,441 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Constants
-SOUND_SPEED_CM_PER_SEC = 34300  # Speed of sound in cm/s
-DISTANCE_CALCULATION_FACTOR = SOUND_SPEED_CM_PER_SEC / 2  # Divide by 2 for round trip
-MIN_VALID_DISTANCE_CM = 2
-MAX_VALID_DISTANCE_CM = 400
-DEFAULT_SENSOR_ERROR_DISTANCE = -1
-OBSTACLE_CHECK_INTERVAL = 0.1  # seconds
-STATUS_UPDATE_INTERVAL = 0.1   # seconds
-SMOOTH_SPEED_STEP_DELAY = 0.01  # seconds
+# Face Recognition Helper Class
+class FaceRecognitionHelper:
+    """Face recognition helper with speech synthesis"""
+    
+    def __init__(self, images_path: str = '/home/robot/summer-research-robot/RGB-cam/images'):
+        self.images_path = images_path
+        self.images = []
+        self.class_names = []
+        self.encode_list_known = []
+        self.cap = None
+        self.initialize_face_recognition()
+    
+    def initialize_face_recognition(self):
+        """Initialize face recognition system"""
+        if not FACE_RECOGNITION_AVAILABLE:
+            logger.warning("Face recognition not available")
+            return
+        
+        try:
+            # Create images directory if it doesn't exist
+            os.makedirs(self.images_path, exist_ok=True)
+            
+            # Load existing face images
+            my_list = os.listdir(self.images_path)
+            for cl in my_list:
+                if cl.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    cur_img = cv2.imread(f'{self.images_path}/{cl}')
+                    if cur_img is not None:
+                        self.images.append(cur_img)
+                        self.class_names.append(os.path.splitext(cl)[0])
+            
+            self.encode_list_known = self.find_encodings(self.images)
+            logger.info(f"Loaded {len(self.class_names)} known faces")
+            
+        except Exception as e:
+            logger.error(f"Face recognition initialization failed: {e}")
+    
+    def find_encodings(self, images):
+        """Generate face encodings for known faces"""
+        if not FACE_RECOGNITION_AVAILABLE:
+            return []
+        
+        encode_list = []
+        for img in images:
+            try:
+                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                encodings = face_recognition.face_encodings(img_rgb)
+                if encodings:
+                    encode_list.append(encodings[0])
+                else:
+                    logger.warning("No face found in image")
+            except Exception as e:
+                logger.error(f"Error encoding face: {e}")
+        return encode_list
+    
+    def speak(self, text: str):
+        """Cross-platform text-to-speech"""
+        system = platform.system().lower()
+        
+        try:
+            if system == "windows":
+                ps_command = f'Add-Type -AssemblyName System.Speech; $speak = New-Object System.Speech.Synthesis.SpeechSynthesizer; $speak.Speak("{text}")'
+                subprocess.run(["powershell", "-Command", ps_command], 
+                              capture_output=True, check=True)
+            elif system == "darwin":  # macOS
+                subprocess.run(["say", text], check=True)
+            elif system == "linux":
+                try:
+                    subprocess.run(["espeak", text], check=True)
+                except (subprocess.CalledProcessError, FileNotFoundError):
+                    try:
+                        subprocess.run(["echo", text, "|", "festival", "--tts"], 
+                                     shell=True, check=True)
+                    except (subprocess.CalledProcessError, FileNotFoundError):
+                        subprocess.run(["spd-say", text], check=True)
+            else:
+                logger.info(f"TTS: {text}")
+                
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.info(f"TTS: {text}")
+    
+    def listen(self) -> Optional[str]:
+        """Listen for speech input"""
+        if not SPEECH_RECOGNITION_AVAILABLE:
+            logger.warning("Speech recognition not available")
+            return None
+        
+        try:
+            r = sr.Recognizer()
+            with sr.Microphone() as source:
+                logger.info("Listening...")
+                audio = r.listen(source, timeout=5)
+                text = r.recognize_google(audio)
+                logger.info(f"Heard: {text}")
+                return text.lower()
+        except sr.UnknownValueError:
+            logger.warning("Could not understand audio")
+        except sr.RequestError as e:
+            logger.error(f"Speech recognition error: {e}")
+        except sr.WaitTimeoutError:
+            logger.warning("Listening timeout")
+        except Exception as e:
+            logger.error(f"Speech recognition error: {e}")
+        return None
+    
+    def take_picture(self, name: str) -> bool:
+        """Take a picture for face registration"""
+        if self.cap is None:
+            return False
+        
+        try:
+            success, image = self.cap.read()
+            if success:
+                path = os.path.join(self.images_path, f'{name}.jpg')
+                cv2.imwrite(path, image)
+                logger.info(f"Picture saved for {name}")
+                return True
+            else:
+                logger.error("Failed to capture image")
+                return False
+        except Exception as e:
+            logger.error(f"Error taking picture: {e}")
+            return False
+    
+    def find_match(self, mode: str = "auto") -> Optional[str]:
+        """Find face match with new user registration"""
+        if not FACE_RECOGNITION_AVAILABLE or self.cap is None:
+            return "Unknown"
+        
+        unknown_count = 0
+        known_count = 0
+        
+        for attempt in range(30):  # Try for 30 frames
+            try:
+                success, img = self.cap.read()
+                if not success:
+                    continue
+                
+                img_small = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+                img_rgb = cv2.cvtColor(img_small, cv2.COLOR_BGR2RGB)
+                
+                faces_cur_frame = face_recognition.face_locations(img_rgb)
+                encodes_cur_frame = face_recognition.face_encodings(img_rgb, faces_cur_frame)
+                
+                for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
+                    if not self.encode_list_known:
+                        # No known faces, register this person
+                        if mode == "auto":
+                            name = f"Person_{len(self.class_names) + 1}"
+                        else:
+                            name = input("Welcome! What's your name? ")
+                        
+                        if self.take_picture(name):
+                            # Update known faces
+                            new_img = cv2.imread(f'{self.images_path}/{name}.jpg')
+                            if new_img is not None:
+                                new_img_rgb = cv2.cvtColor(new_img, cv2.COLOR_BGR2RGB)
+                                new_encoding = face_recognition.face_encodings(new_img_rgb)
+                                if new_encoding:
+                                    self.encode_list_known.append(new_encoding[0])
+                                    self.class_names.append(name)
+                                    return name
+                        continue
+                    
+                    matches = face_recognition.compare_faces(self.encode_list_known, encode_face)
+                    face_distances = face_recognition.face_distance(self.encode_list_known, encode_face)
+                    
+                    if face_distances.size > 0:
+                        match_index = np.argmin(face_distances)
+                        best_match_distance = face_distances[match_index]
+                        
+                        if best_match_distance > 0.42:  # Unknown face
+                            unknown_count += 1
+                            known_count = 0
+                            
+                            if unknown_count > 3:
+                                if mode == "speech":
+                                    self.speak("Welcome new visitor! What is your name?")
+                                    name = self.listen()
+                                elif mode == "text":
+                                    name = input("Welcome new visitor! What is your name? ")
+                                else:
+                                    name = f"Unknown_{int(time.time())}"
+                                
+                                if name and self.take_picture(name):
+                                    # Update encodings
+                                    new_img = cv2.imread(f'{self.images_path}/{name}.jpg')
+                                    if new_img is not None:
+                                        new_img_rgb = cv2.cvtColor(new_img, cv2.COLOR_BGR2RGB)
+                                        new_encoding = face_recognition.face_encodings(new_img_rgb)
+                                        if new_encoding:
+                                            self.encode_list_known.append(new_encoding[0])
+                                            self.class_names.append(name)
+                                            return name
+                                
+                                unknown_count = 0
+                        
+                        elif matches[match_index]:  # Found match
+                            unknown_count = 0
+                            known_count += 1
+                            name = self.class_names[match_index].upper()
+                            
+                            if known_count > 2:
+                                return name
+                
+                time.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Face recognition error: {e}")
+                continue
+        
+        return "Unknown"
 
-class RobotStatus(Enum):
-    """Robot status enumeration"""
-    IDLE = "idle"
-    MOVING = "moving"
-    OBSTACLE_DETECTED = "obstacle_detected"
-    ERROR = "error"
-    EMERGENCY_STOP = "emergency_stop"
+# Hand Detection Helper Class
+class HandDetector:
+    """Hand gesture detection using MediaPipe"""
+    
+    def __init__(self, mode=False, max_hands=2, detection_con=0.5, track_con=0.5):
+        if not MEDIAPIPE_AVAILABLE:
+            logger.warning("MediaPipe not available - hand detection disabled")
+            return
+        
+        self.mode = mode
+        self.max_hands = max_hands
+        self.detection_con = detection_con
+        self.track_con = track_con
+        
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands(
+            static_image_mode=self.mode,
+            max_num_hands=self.max_hands,
+            min_detection_confidence=self.detection_con,
+            min_tracking_confidence=self.track_con
+        )
+        self.mp_draw = mp.solutions.drawing_utils
+        self.results = None
+    
+    def find_hands(self, img, draw=True):
+        """Find hands in image"""
+        if not MEDIAPIPE_AVAILABLE:
+            return img
+        
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        self.results = self.hands.process(img_rgb)
+        
+        if self.results.multi_hand_landmarks:
+            for hand_lms in self.results.multi_hand_landmarks:
+                if draw:
+                    self.mp_draw.draw_landmarks(img, hand_lms, self.mp_hands.HAND_CONNECTIONS)
+        return img
+    
+    def find_position(self, img, hand_no=0, draw=True):
+        """Find hand landmark positions"""
+        lm_list = []
+        if self.results and self.results.multi_hand_landmarks:
+            try:
+                my_hand = self.results.multi_hand_landmarks[hand_no]
+                for id, lm in enumerate(my_hand.landmark):
+                    h, w, c = img.shape
+                    cx, cy = int(lm.x * w), int(lm.y * h)
+                    lm_list.append([id, cx, cy])
+                    if draw:
+                        cv2.circle(img, (cx, cy), 15, (255, 0, 255), cv2.FILLED)
+            except IndexError:
+                pass
+        return lm_list
+    
+    def is_waving(self, lm_list, index_x_history):
+        """Detect waving gesture"""
+        if len(lm_list) < 21:
+            return False
+        
+        if not self.high_five_position(lm_list):
+            return False
+        
+        index_x = lm_list[8][1]  # index fingertip x position
+        index_x_history.append(index_x)
+        
+        # Check if index finger tip is swinging side to side
+        index_motion = max(index_x_history) - min(index_x_history)
+        return index_motion > 40
+    
+    def high_five_position(self, lm_list):
+        """Detect high-five hand position"""
+        if len(lm_list) < 21:
+            return False
+        
+        # Check if all fingers are extended
+        fingers = [
+            [4, 3, 2, 1],    # Thumb
+            [8, 7, 6, 5],    # Index
+            [12, 11, 10, 9], # Middle
+            [16, 15, 14, 13],# Ring
+            [20, 19, 18, 17] # Pinky
+        ]
+        
+        for finger in fingers:
+            for i in range(len(finger) - 1):
+                if lm_list[finger[i]][2] >= lm_list[finger[i + 1]][2]:
+                    return False
+        
+        wrist_y = lm_list[0][2]
+        for tip in [4, 8, 12, 16, 20]:
+            if lm_list[tip][2] >= wrist_y:
+                return False
+        
+        return True
+    
+    def is_shaking_hands(self, lm_list):
+        """Detect handshake gesture"""
+        if len(lm_list) < 21:
+            return False
+        
+        # Check if fingers are close together
+        tips = [4, 8, 12, 16, 20]
+        for i in range(1, 4):
+            if abs(lm_list[tips[i]][1] - lm_list[tips[i + 1]][1]) > 50:
+                return False
+        
+        # Check hand orientation
+        if abs(lm_list[5][2] - lm_list[0][2]) > 50:
+            return False
+        
+        return True
 
-class MovementDirection(Enum):
-    """Movement direction enumeration"""
-    FORWARD = "forward"
-    BACKWARD = "backward"
-    TURN_LEFT = "turnleft"
-    TURN_RIGHT = "turnright"
-    MOVE_LEFT = "moveleft"
-    MOVE_RIGHT = "moveright"
-    STOP = "stop"
-
+# Enhanced Robot Configuration
 @dataclass
-class RobotConfig:
-    """Robot configuration dataclass with proper motor compensation"""
-    # Motor pins - matching your old code exactly
-    motor1_speed: int = 38  # Motor1_Speed
-    motor1_dir: int = 40    # Motor1_Dir
-    motor2_speed: int = 32  # Motor2_Speed
-    motor2_dir: int = 36    # Motor2_Dir
-    motor3_speed: int = 16  # Motor3_Speed
-    motor3_dir: int = 26    # Motor3_Dir
+class EnhancedRobotConfig:
+    """Enhanced robot configuration with vision and speech settings"""
+    # Motor pins
+    motor1_speed: int = 38
+    motor1_dir: int = 40
+    motor2_speed: int = 32
+    motor2_dir: int = 36
+    motor3_speed: int = 16
+    motor3_dir: int = 26
     
-    # Ultrasonic sensor pins - matching your old code exactly
-    echo1: int = 31  # Echo1
-    echo2: int = 29  # Echo2
-    echo3: int = 22  # Echo3
-    trig1: int = 11  # Trig1
-    trig2: int = 13  # Trig2
-    trig3: int = 15  # Trig3
+    # Ultrasonic sensor pins
+    echo1: int = 31
+    echo2: int = 29
+    echo3: int = 22
+    trig1: int = 11
+    trig2: int = 13
+    trig3: int = 15
     
-    # Motor settings - matching your old code exactly
-    pwm_frequency: int = 1000  # freq = 1000
-    default_speed: int = 25    # gSliderSpeed = 25
-    motor3_compensate: int = 3 # motor3_compensate = 15
+    # Motor settings
+    pwm_frequency: int = 1000
+    default_speed: int = 25
+    motor3_compensate: int = 3
     
-    # Obstacle detection - matching your old code
-    obstacle_threshold: float = 30.0  # OBSTACLE_THRESHOLD = 30.0
+    # Obstacle detection
+    obstacle_threshold: float = 30.0
     sensor_timeout: float = 0.5
-    obstacle_clear_threshold: float = 50.0  # Distance to clear obstacle status
+    obstacle_clear_threshold: float = 50.0
+    
+    # Vision settings
+    camera_index: int = 0
+    face_images_path: str = '/home/robot/summer-research-robot/RGB-cam/images'
+    enable_face_recognition: bool = True
+    enable_hand_detection: bool = True
+    
+    # Speech settings
+    enable_speech_synthesis: bool = True
+    enable_speech_recognition: bool = True
     
     # AI model
     ai_model: str = "llama3"
 
+# Enhanced Robot State
 @dataclass
-class RobotState:
-    """Robot state dataclass with proper initialization"""
-    motor1_speed: int = 0  # gCurSpeed1
-    motor2_speed: int = 0  # gCurSpeed2
-    motor3_speed: int = 0  # gCurSpeed3
-    status: RobotStatus = RobotStatus.IDLE
+class EnhancedRobotState:
+    """Enhanced robot state with vision and speech data"""
+    # Motor states
+    motor1_speed: int = 0
+    motor2_speed: int = 0
+    motor3_speed: int = 0
+    
+    # Basic states
+    status: str = "idle"
     obstacle_detected: bool = False
     last_distances: List[float] = field(default_factory=list)
     sensor_distances: Dict[str, float] = field(default_factory=lambda: {"front": 0.0, "left": 0.0, "right": 0.0})
-    obstacle_sensor: str = ""  # Which sensor detected the obstacle
-    obstacle_distance: float = 0.0  # Distance of detected obstacle
+    obstacle_sensor: str = ""
+    obstacle_distance: float = 0.0
     last_command: str = ""
     uptime: float = 0.0
-
-class RobotController:
-    """Main robot controller class for backend integration with fixed threading and error handling"""
     
-    def __init__(self, config: Optional[RobotConfig] = None):
-        """Initialize robot controller with configuration"""
-        self.config = config or RobotConfig()
-        self.state = RobotState()
+    # Vision states
+    current_user: str = "Unknown"
+    faces_detected: List[str] = field(default_factory=list)
+    hand_gesture: str = "none"
+    camera_active: bool = False
+    
+    # Speech states
+    last_speech_output: str = ""
+    listening: bool = False
+    speech_recognition_active: bool = False
+    
+    # Interaction mode
+    interaction_mode: str = "idle"  # idle, speech, text, keyboard, auto
+
+class EnhancedRobotController:
+    """Enhanced robot controller with face recognition and speech capabilities"""
+    
+    def __init__(self, config: Optional[EnhancedRobotConfig] = None):
+        self.config = config or EnhancedRobotConfig()
+        self.state = EnhancedRobotState()
         self.start_time = time.time()
         
-        # Threading controls with proper initialization
-        self.movement_lock = threading.RLock()  # Use RLock to allow recursive locking
-        self.state_lock = threading.RLock()     # Separate lock for state updates
+        # Threading controls
+        self.movement_lock = threading.RLock()
+        self.state_lock = threading.RLock()
+        self.vision_lock = threading.RLock()
         self.interrupt_event = threading.Event()
         self.obstacle_event = threading.Event()
         self.shutdown_event = threading.Event()
         
-        # Thread references for proper cleanup
+        # Thread references
         self.obstacle_thread = None
         self.status_thread = None
+        self.vision_thread = None
+        self.hand_detection_thread = None
         
-        # PWM object references for cleanup
+        # Vision components
+        self.face_helper = None
+        self.hand_detector = None
+        self.camera = None
+        self.index_x_history = deque(maxlen=10)
+        
+        # PWM references
         self.motor1_pwm = None
         self.motor2_pwm = None
         self.motor3_pwm = None
         
-        # Define direction constants that work in both modes
+        # Direction constants
         self.HIGH = GPIO.HIGH if GPIO_AVAILABLE else 1
         self.LOW = GPIO.LOW if GPIO_AVAILABLE else 0
         
@@ -135,23 +497,51 @@ class RobotController:
         self.gpio_initialized = False
         self._setup_gpio()
         self._setup_ai()
+        self._setup_vision()
         self._start_background_tasks()
         
-        logger.info("Robot controller initialized successfully")
+        logger.info("Enhanced robot controller initialized successfully")
     
-    def _setup_gpio(self):
-        """Setup GPIO pins and PWM with proper error handling - matching old code structure"""
-        if not GPIO_AVAILABLE:
-            logger.warning("GPIO not available - running in simulation mode")
-            self.gpio_initialized = False
+    def _setup_vision(self):
+        """Setup camera and vision components"""
+        if not self.config.enable_face_recognition and not self.config.enable_hand_detection:
+            logger.info("Vision components disabled in config")
             return
         
-        pwm_objects = []
         try:
-            # GPIO Setup - exactly like old code
+            # Initialize camera
+            self.camera = cv2.VideoCapture(self.config.camera_index)
+            if self.camera.isOpened():
+                with self.state_lock:
+                    self.state.camera_active = True
+                logger.info("Camera initialized successfully")
+                
+                # Initialize face recognition
+                if self.config.enable_face_recognition and FACE_RECOGNITION_AVAILABLE:
+                    self.face_helper = FaceRecognitionHelper(self.config.face_images_path)
+                    self.face_helper.cap = self.camera
+                    logger.info("Face recognition initialized")
+                
+                # Initialize hand detection
+                if self.config.enable_hand_detection and MEDIAPIPE_AVAILABLE:
+                    self.hand_detector = HandDetector()
+                    logger.info("Hand detection initialized")
+            else:
+                logger.warning("Failed to initialize camera")
+                
+        except Exception as e:
+            logger.error(f"Vision setup failed: {e}")
+    
+    def _setup_gpio(self):
+        """Setup GPIO pins and PWM"""
+        if not GPIO_AVAILABLE:
+            logger.warning("GPIO not available - running in simulation mode")
+            return
+        
+        try:
             GPIO.setmode(GPIO.BOARD)
             
-            # Setup ultrasonic sensors - exactly like old code
+            # Setup ultrasonic sensors
             GPIO.setup(self.config.echo1, GPIO.IN)
             GPIO.setup(self.config.echo2, GPIO.IN)
             GPIO.setup(self.config.echo3, GPIO.IN)
@@ -159,7 +549,7 @@ class RobotController:
             GPIO.setup(self.config.trig2, GPIO.OUT, initial=GPIO.LOW)
             GPIO.setup(self.config.trig3, GPIO.OUT, initial=GPIO.LOW)
             
-            # Setup motors - exactly like old code
+            # Setup motors
             GPIO.setup(self.config.motor1_speed, GPIO.OUT, initial=GPIO.LOW)
             GPIO.setup(self.config.motor1_dir, GPIO.OUT, initial=GPIO.LOW)
             GPIO.setup(self.config.motor2_speed, GPIO.OUT, initial=GPIO.LOW)
@@ -167,17 +557,11 @@ class RobotController:
             GPIO.setup(self.config.motor3_speed, GPIO.OUT, initial=GPIO.LOW)
             GPIO.setup(self.config.motor3_dir, GPIO.OUT, initial=GPIO.LOW)
             
-            # Setup PWM with proper cleanup tracking - exactly like old code
+            # Setup PWM
             self.motor1_pwm = GPIO.PWM(self.config.motor1_speed, self.config.pwm_frequency)
-            pwm_objects.append(self.motor1_pwm)
-            
             self.motor2_pwm = GPIO.PWM(self.config.motor2_speed, self.config.pwm_frequency)
-            pwm_objects.append(self.motor2_pwm)
-            
             self.motor3_pwm = GPIO.PWM(self.config.motor3_speed, self.config.pwm_frequency)
-            pwm_objects.append(self.motor3_pwm)
             
-            # Start all PWM - exactly like old code
             self.motor1_pwm.start(0)
             self.motor2_pwm.start(0)
             self.motor3_pwm.start(0)
@@ -187,29 +571,16 @@ class RobotController:
             
         except Exception as e:
             logger.error(f"GPIO initialization failed: {e}")
-            # Cleanup any partially initialized PWM
-            for pwm in pwm_objects:
-                try:
-                    if hasattr(pwm, 'stop'):
-                        pwm.stop()
-                except Exception as cleanup_error:
-                    logger.error(f"PWM cleanup error: {cleanup_error}")
-            
-            # Reset PWM references
-            self.motor1_pwm = None
-            self.motor2_pwm = None
-            self.motor3_pwm = None
             self.gpio_initialized = False
     
     def _setup_ai(self):
-        """Setup AI model for conversation - matching old code AI setup"""
+        """Setup AI model for conversation"""
         if not AI_AVAILABLE:
-            logger.warning("AI not available - conversational features disabled")
+            logger.warning("AI not available")
             self.ai_chain = None
             return
         
         try:
-            # Exactly like old code AI setup
             template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
             model = OllamaLLM(model=self.config.ai_model)
             prompt = ChatPromptTemplate.from_template(template)
@@ -220,8 +591,9 @@ class RobotController:
             self.ai_chain = None
     
     def _start_background_tasks(self):
-        """Start background monitoring tasks with proper thread management"""
+        """Start background monitoring tasks"""
         try:
+            # Obstacle detection
             self.obstacle_thread = threading.Thread(
                 target=self._obstacle_detection_loop, 
                 daemon=True, 
@@ -229,6 +601,7 @@ class RobotController:
             )
             self.obstacle_thread.start()
             
+            # Status updates
             self.status_thread = threading.Thread(
                 target=self._status_update_loop, 
                 daemon=True, 
@@ -236,49 +609,100 @@ class RobotController:
             )
             self.status_thread.start()
             
+            # Vision processing
+            if self.state.camera_active:
+                self.vision_thread = threading.Thread(
+                    target=self._vision_processing_loop,
+                    daemon=True,
+                    name="VisionProcessing"
+                )
+                self.vision_thread.start()
+                
+                # Hand detection
+                if self.hand_detector:
+                    self.hand_detection_thread = threading.Thread(
+                        target=self._hand_detection_loop,
+                        daemon=True,
+                        name="HandDetection"
+                    )
+                    self.hand_detection_thread.start()
+            
             logger.info("Background tasks started successfully")
         except Exception as e:
             logger.error(f"Failed to start background tasks: {e}")
     
-    def _update_obstacle_state(self, detected: bool, sensor: str = "", distance: float = 0.0):
-        """Atomically update all obstacle-related state variables"""
-        with self.state_lock:
-            self.state.obstacle_detected = detected
-            self.state.obstacle_sensor = sensor
-            self.state.obstacle_distance = distance
-            
-            if detected:
-                self.state.status = RobotStatus.OBSTACLE_DETECTED
-                self.obstacle_event.set()
-                logger.warning(f"Obstacle detected by {sensor} sensor at {distance:.1f}cm!")
-            else:
-                self.obstacle_event.clear()
-                if self.state.status == RobotStatus.OBSTACLE_DETECTED:
-                    self.state.status = RobotStatus.IDLE
-                logger.info("Obstacle detection cleared")
-    
-    def _obstacle_detection_loop(self):
-        """Background obstacle detection loop with proper state management and auto-clear"""
+    def _vision_processing_loop(self):
+        """Background vision processing for face recognition"""
         while not self.shutdown_event.is_set():
             try:
-                # Always check sensors, whether moving or not
+                if self.face_helper and self.camera and self.camera.isOpened():
+                    # Periodic face recognition check
+                    with self.vision_lock:
+                        current_user = self.face_helper.find_match("auto")
+                        if current_user and current_user != "Unknown":
+                            with self.state_lock:
+                                if self.state.current_user != current_user:
+                                    self.state.current_user = current_user
+                                    self.state.last_speech_output = f"Hello {current_user}!"
+                                    if self.config.enable_speech_synthesis:
+                                        self.face_helper.speak(f"Hello {current_user}!")
+                                    logger.info(f"User recognized: {current_user}")
+                
+                time.sleep(2.0)  # Check every 2 seconds
+                
+            except Exception as e:
+                logger.error(f"Vision processing error: {e}")
+                time.sleep(1.0)
+    
+    def _hand_detection_loop(self):
+        """Background hand gesture detection"""
+        while not self.shutdown_event.is_set():
+            try:
+                if self.hand_detector and self.camera and self.camera.isOpened():
+                    success, frame = self.camera.read()
+                    if success:
+                        frame = cv2.flip(frame, 1)
+                        self.hand_detector.find_hands(frame, draw=False)
+                        lm_list = self.hand_detector.find_position(frame, draw=False)
+                        
+                        if lm_list:
+                            gesture = "none"
+                            if self.hand_detector.is_waving(lm_list, self.index_x_history):
+                                gesture = "waving"
+                            elif self.hand_detector.is_shaking_hands(lm_list):
+                                gesture = "shaking_hands"
+                            
+                            with self.state_lock:
+                                if self.state.hand_gesture != gesture and gesture != "none":
+                                    self.state.hand_gesture = gesture
+                                    self.state.last_speech_output = f"I see you're {gesture.replace('_', ' ')}!"
+                                    if self.config.enable_speech_synthesis:
+                                        self.face_helper.speak(f"I see you're {gesture.replace('_', ' ')}!")
+                                    logger.info(f"Hand gesture detected: {gesture}")
+                
+                time.sleep(0.03)  # ~30 FPS
+                
+            except Exception as e:
+                logger.error(f"Hand detection error: {e}")
+                time.sleep(0.1)
+    
+    def _obstacle_detection_loop(self):
+        """Background obstacle detection loop"""
+        while not self.shutdown_event.is_set():
+            try:
                 sensor_readings = self._get_all_distances_with_names()
                 
                 if sensor_readings:
-                    # Update sensor distances in state atomically
                     with self.state_lock:
                         self.state.sensor_distances = sensor_readings.copy()
-                        # Update last_distances for backward compatibility
                         self.state.last_distances = list(sensor_readings.values())
                     
-                    # Find the closest obstacle from valid readings
                     valid_distances = [d for d in sensor_readings.values() if d > 0]
                     
                     if valid_distances:
                         min_distance = min(valid_distances)
                         closest_sensor = ""
                         
-                        # Find which sensor has the minimum distance
                         for sensor_name, distance in sensor_readings.items():
                             if distance == min_distance and distance > 0:
                                 closest_sensor = sensor_name
@@ -289,39 +713,60 @@ class RobotController:
                             self._update_obstacle_state(True, closest_sensor, min_distance)
                             self.emergency_stop()
                             
-                        # Check for obstacle clearing (AUTO-RESET) - only if we have valid readings
+                        # Check for obstacle clearing
                         elif self.state.obstacle_detected and min_distance > self.config.obstacle_clear_threshold:
                             logger.info(f"Obstacle cleared! All sensors show > {self.config.obstacle_clear_threshold}cm")
                             self._update_obstacle_state(False)
                 
-                time.sleep(OBSTACLE_CHECK_INTERVAL)
+                time.sleep(0.1)
                     
             except Exception as e:
                 logger.error(f"Error in obstacle detection: {e}")
-                time.sleep(OBSTACLE_CHECK_INTERVAL)
+                time.sleep(0.1)
     
     def _status_update_loop(self):
-        """Background status update loop with proper state management"""
+        """Background status update loop"""
         while not self.shutdown_event.is_set():
             try:
                 with self.state_lock:
                     self.state.uptime = time.time() - self.start_time
                     
-                    # Update status based on current state (only if not in obstacle mode)
+                    # Update status based on current state
                     if not self.state.obstacle_detected:
                         if self._is_moving():
-                            self.state.status = RobotStatus.MOVING
+                            self.state.status = "moving"
                         else:
-                            self.state.status = RobotStatus.IDLE
+                            self.state.status = "idle"
                 
-                time.sleep(STATUS_UPDATE_INTERVAL)
+                time.sleep(0.1)
                 
             except Exception as e:
                 logger.error(f"Error in status update: {e}")
-                time.sleep(STATUS_UPDATE_INTERVAL)
+                time.sleep(0.1)
+    
+    def _update_obstacle_state(self, detected: bool, sensor: str = "", distance: float = 0.0):
+        """Update obstacle detection state"""
+        with self.state_lock:
+            self.state.obstacle_detected = detected
+            self.state.obstacle_sensor = sensor
+            self.state.obstacle_distance = distance
+            
+            if detected:
+                self.state.status = "obstacle_detected"
+                self.obstacle_event.set()
+                message = f"Obstacle detected by {sensor} sensor at {distance:.1f}cm!"
+                self.state.last_speech_output = message
+                if self.config.enable_speech_synthesis and self.face_helper:
+                    self.face_helper.speak("Obstacle detected! Stopping.")
+                logger.warning(message)
+            else:
+                self.obstacle_event.clear()
+                if self.state.status == "obstacle_detected":
+                    self.state.status = "idle"
+                logger.info("Obstacle detection cleared")
     
     def _is_moving(self) -> bool:
-        """Check if robot is currently moving (call within state_lock)"""
+        """Check if robot is currently moving"""
         return any([
             self.state.motor1_speed > 0,
             self.state.motor2_speed > 0,
@@ -329,91 +774,67 @@ class RobotController:
         ])
     
     def _get_distance(self, trig_pin: int, echo_pin: int) -> float:
-        """Get distance from a single ultrasonic sensor - matching old code get_distance function"""
+        """Get distance from ultrasonic sensor"""
         if not self.gpio_initialized:
-            return 100.0  # Simulation mode - return safe distance
+            return 100.0  # Simulation mode
         
         try:
-            # Clean state - exactly like old code
             GPIO.output(trig_pin, False)
             time.sleep(0.000002)
             
-            # Send trigger pulse - exactly like old code
             GPIO.output(trig_pin, True)
             time.sleep(0.00001)
             GPIO.output(trig_pin, False)
             
-            # Wait for echo start with timeout
             timeout_start = time.time()
             while GPIO.input(echo_pin) == 0:
                 if time.time() - timeout_start > self.config.sensor_timeout:
-                    return DEFAULT_SENSOR_ERROR_DISTANCE
+                    return -1
             pulse_start = time.time()
             
-            # Wait for echo end with timeout
             timeout_start = time.time()
             while GPIO.input(echo_pin) == 1:
                 if time.time() - timeout_start > self.config.sensor_timeout:
-                    return DEFAULT_SENSOR_ERROR_DISTANCE
+                    return -1
             pulse_end = time.time()
             
-            # Calculate distance using proper physics - exactly like old code
             pulse_duration = pulse_end - pulse_start
-            distance = pulse_duration * 17150  # Same calculation as old code
+            distance = pulse_duration * 17150
             distance = round(distance, 2)
             
-            # Validate distance range - exactly like old code
-            if MIN_VALID_DISTANCE_CM <= distance <= MAX_VALID_DISTANCE_CM:
+            if 2 <= distance <= 400:
                 return distance
             else:
-                return DEFAULT_SENSOR_ERROR_DISTANCE
-            
+                return -1
+                
         except Exception as e:
-            logger.error(f"Distance measurement error on pins {trig_pin}/{echo_pin}: {e}")
-            return DEFAULT_SENSOR_ERROR_DISTANCE
-    
-    def _get_all_distances(self) -> List[float]:
-        """Get distances from all sensors (backward compatibility) - only valid readings"""
-        sensor_configs = [
-            (self.config.trig1, self.config.echo1),
-            (self.config.trig2, self.config.echo2),
-            (self.config.trig3, self.config.echo3)
-        ]
-        
-        distances = []
-        for trig, echo in sensor_configs:
-            dist = self._get_distance(trig, echo)
-            if dist > 0:  # Only include valid readings
-                distances.append(dist)
-        
-        return distances
+            logger.error(f"Distance measurement error: {e}")
+            return -1
     
     def _get_all_distances_with_names(self) -> Dict[str, float]:
-        """Get distances from all sensors with sensor names - only include valid readings"""
+        """Get distances from all sensors with names"""
         sensor_configs = [
-            (self.config.trig1, self.config.echo1, "front"),   # Sensor 1 = Front
-            (self.config.trig2, self.config.echo2, "left"),    # Sensor 2 = Left  
-            (self.config.trig3, self.config.echo3, "right")    # Sensor 3 = Right
+            (self.config.trig1, self.config.echo1, "front"),
+            (self.config.trig2, self.config.echo2, "left"),
+            (self.config.trig3, self.config.echo3, "right")
         ]
         
         sensor_readings = {}
         for trig, echo, name in sensor_configs:
             dist = self._get_distance(trig, echo)
-            if dist > 0:  # Only include valid readings
+            if dist > 0:
                 sensor_readings[name] = dist
-            # Don't add invalid readings - this prevents false obstacle clearing
         
         return sensor_readings
     
     def _change_speeds_smooth(self, new_speeds: Tuple[int, int, int]):
-        """Smoothly change motor speeds with proper thread safety - enhanced version of old changeSpeedSmooth"""
+        """Smoothly change motor speeds"""
         if not self.gpio_initialized:
             with self.state_lock:
                 self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed = new_speeds
             return
         
         with self.movement_lock:
-            # Check obstacle state once at the beginning
             with self.state_lock:
                 if self.state.obstacle_detected or self.interrupt_event.is_set():
                     self._stop_motors_immediate()
@@ -421,16 +842,13 @@ class RobotController:
                 
                 current_speeds = (self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed)
             
-            # Calculate steps for smooth transition - exactly like old code
             speed_diffs = [abs(new_speeds[i] - current_speeds[i]) for i in range(3)]
             steps = max(speed_diffs) if speed_diffs else 0
             
             if steps < 1:
-                steps = 1  # Minimum one step to avoid division by zero
+                steps = 1
             
-            # Perform smooth transition - exactly like old code logic
             for step in range(steps + 1):
-                # Check for interruption during transition
                 with self.state_lock:
                     if self.state.obstacle_detected or self.interrupt_event.is_set():
                         self._stop_motors_immediate()
@@ -442,10 +860,8 @@ class RobotController:
                     for i in range(3)
                 ]
                 
-                # Clamp speeds to valid range
                 speeds = [max(0, min(100, speed)) for speed in speeds]
                 
-                # Apply PWM safely - exactly like old code
                 try:
                     if self.motor1_pwm:
                         self.motor1_pwm.ChangeDutyCycle(speeds[0])
@@ -458,9 +874,8 @@ class RobotController:
                     self._stop_motors_immediate()
                     return
                 
-                time.sleep(SMOOTH_SPEED_STEP_DELAY)  # Same as old code 0.01
+                time.sleep(0.01)
             
-            # Update state atomically if successful
             with self.state_lock:
                 if not self.state.obstacle_detected and not self.interrupt_event.is_set():
                     self.state.motor1_speed, self.state.motor2_speed, self.state.motor3_speed = new_speeds
@@ -468,7 +883,7 @@ class RobotController:
                     self._stop_motors_immediate()
     
     def _stop_motors_immediate(self):
-        """Immediately stop all motors (call within appropriate lock) - like old stopNoTime"""
+        """Immediately stop all motors"""
         try:
             if self.gpio_initialized and all([self.motor1_pwm, self.motor2_pwm, self.motor3_pwm]):
                 self.motor1_pwm.ChangeDutyCycle(0)
@@ -477,7 +892,6 @@ class RobotController:
         except Exception as e:
             logger.error(f"Error stopping motors: {e}")
         
-        # Always update state regardless of GPIO errors
         self.state.motor1_speed = 0
         self.state.motor2_speed = 0
         self.state.motor3_speed = 0
@@ -485,14 +899,14 @@ class RobotController:
     # Public API methods
     
     def get_status(self) -> Dict:
-        """Get current robot status with enhanced obstacle information"""
+        """Get current robot status with enhanced information"""
         with self.state_lock:
             obstacle_message = "Robot operational"
             if self.state.obstacle_detected:
                 obstacle_message = f"Obstacle detected by {self.state.obstacle_sensor} sensor at {self.state.obstacle_distance:.1f}cm"
             
             return {
-                "status": self.state.status.value,
+                "status": self.state.status,
                 "message": obstacle_message,
                 "obstacle_detected": self.state.obstacle_detected,
                 "obstacle_sensor": self.state.obstacle_sensor,
@@ -506,26 +920,113 @@ class RobotController:
                 "last_distances": self.state.last_distances.copy(),
                 "last_command": self.state.last_command,
                 "uptime": self.state.uptime,
-                "gpio_available": self.gpio_initialized
+                "gpio_available": self.gpio_initialized,
+                # Enhanced status fields
+                "current_user": self.state.current_user,
+                "faces_detected": self.state.faces_detected.copy(),
+                "hand_gesture": self.state.hand_gesture,
+                "camera_active": self.state.camera_active,
+                "last_speech_output": self.state.last_speech_output,
+                "listening": self.state.listening,
+                "speech_recognition_active": self.state.speech_recognition_active,
+                "interaction_mode": self.state.interaction_mode,
+                "face_recognition_available": FACE_RECOGNITION_AVAILABLE,
+                "speech_recognition_available": SPEECH_RECOGNITION_AVAILABLE,
+                "mediapipe_available": MEDIAPIPE_AVAILABLE
             }
     
-    def get_sensor_data(self) -> Dict:
-        """Get current sensor readings"""
-        distances = self._get_all_distances()
-        with self.state_lock:
-            return {
-                "distances": distances,
-                "min_distance": min(distances) if distances else None,
-                "obstacle_threshold": self.config.obstacle_threshold,
-                "obstacle_detected": self.state.obstacle_detected,
-                "sensor_distances": self.state.sensor_distances.copy(),
-                "obstacle_sensor": self.state.obstacle_sensor
-            }
+    def speak(self, text: str) -> bool:
+        """Make robot speak text"""
+        try:
+            with self.state_lock:
+                self.state.last_speech_output = text
+            
+            if self.config.enable_speech_synthesis and self.face_helper:
+                self.face_helper.speak(text)
+                logger.info(f"Robot spoke: {text}")
+                return True
+            else:
+                logger.info(f"Speech synthesis disabled. Would say: {text}")
+                return False
+        except Exception as e:
+            logger.error(f"Speech synthesis error: {e}")
+            return False
     
-    def move(self, direction: Union[str, MovementDirection], speed: Optional[int] = None, 
-             duration_ms: Optional[int] = None) -> bool:
-        """Move robot in specified direction with proper validation - using exact old code motor configurations"""
-        # Map frontend directions to backend directions
+    def listen_for_speech(self, timeout: int = 5) -> Optional[str]:
+        """Listen for speech input"""
+        if not self.config.enable_speech_recognition or not self.face_helper:
+            return None
+        
+        try:
+            with self.state_lock:
+                self.state.listening = True
+                self.state.speech_recognition_active = True
+            
+            result = self.face_helper.listen()
+            
+            with self.state_lock:
+                self.state.listening = False
+                self.state.speech_recognition_active = False
+            
+            return result
+        except Exception as e:
+            logger.error(f"Speech recognition error: {e}")
+            with self.state_lock:
+                self.state.listening = False
+                self.state.speech_recognition_active = False
+            return None
+    
+    def set_interaction_mode(self, mode: str) -> bool:
+        """Set interaction mode (speech, text, keyboard, auto)"""
+        valid_modes = ["idle", "speech", "text", "keyboard", "auto"]
+        if mode in valid_modes:
+            with self.state_lock:
+                self.state.interaction_mode = mode
+            logger.info(f"Interaction mode set to: {mode}")
+            return True
+        else:
+            logger.warning(f"Invalid interaction mode: {mode}")
+            return False
+    
+    def recognize_user(self, mode: str = "auto") -> Optional[str]:
+        """Recognize current user using face recognition"""
+        if not self.face_helper:
+            return None
+        
+        try:
+            with self.vision_lock:
+                user = self.face_helper.find_match(mode)
+                if user and user != "Unknown":
+                    with self.state_lock:
+                        self.state.current_user = user
+                    return user
+                return None
+        except Exception as e:
+            logger.error(f"Face recognition error: {e}")
+            return None
+    
+    def register_new_user(self, name: str) -> bool:
+        """Register a new user with face recognition"""
+        if not self.face_helper:
+            return False
+        
+        try:
+            with self.vision_lock:
+                success = self.face_helper.take_picture(name)
+                if success:
+                    # Update encodings
+                    self.face_helper.initialize_face_recognition()
+                    with self.state_lock:
+                        self.state.current_user = name
+                    logger.info(f"New user registered: {name}")
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"User registration error: {e}")
+            return False
+    
+    def move(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
+        """Move robot in specified direction"""
         direction_map = {
             "up": "forward",
             "down": "backward", 
@@ -540,76 +1041,60 @@ class RobotController:
             "stop": "stop"
         }
         
-        if isinstance(direction, str):
-            # Map the direction if needed
-            mapped_direction = direction_map.get(direction.lower(), direction.lower())
-            try:
-                direction = MovementDirection(mapped_direction)
-            except ValueError:
-                logger.error(f"Invalid direction: {direction}")
-                return False
+        mapped_direction = direction_map.get(direction.lower(), direction.lower())
         
-        # Check obstacle - but allow stop command
+        # Check obstacle
         with self.state_lock:
-            if self.state.obstacle_detected and direction != MovementDirection.STOP:
-                logger.warning(f"Movement blocked - obstacle detected by {self.state.obstacle_sensor} sensor")
+            if self.state.obstacle_detected and mapped_direction != "stop":
+                message = f"Movement blocked - obstacle detected by {self.state.obstacle_sensor} sensor"
+                self.state.last_speech_output = message
+                if self.config.enable_speech_synthesis and self.face_helper:
+                    self.face_helper.speak("Cannot move, obstacle detected!")
+                logger.warning(message)
                 return False
             
             speed = speed or self.config.default_speed
-            self.state.last_command = direction.value
+            self.state.last_command = mapped_direction
         
-        # Handle stop command with obstacle check
-        if direction == MovementDirection.STOP:
-            # Check if obstacle is cleared when stopping
-            sensor_readings = self._get_all_distances_with_names()
-            if sensor_readings:
-                valid_distances = [d for d in sensor_readings.values() if d > 0]
-                if valid_distances:
-                    min_distance = min(valid_distances)
-                    if min_distance > self.config.obstacle_clear_threshold:
-                        self._update_obstacle_state(False)
-        
-        # Direction configurations using class constants - EXACTLY MATCHING OLD CODE CONFIGURATIONS
+        # Direction configurations
         direction_configs = {
-            # From old code: "forward" - Motor1=0, Motor2=speed, Motor3=speed+compensate
-            MovementDirection.FORWARD: {
+            "forward": {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: "backward" - Motor1=0, Motor2=speed, Motor3=speed+compensate
-            MovementDirection.BACKWARD: {
+            "backward": {
                 "dirs": [self.HIGH, self.LOW, self.HIGH],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: "turnLeft" - Motor1=speed, Motor2=speed, Motor3=speed+compensate
-            MovementDirection.TURN_LEFT: {
+            "turnleft": {
                 "dirs": [self.HIGH, self.LOW, self.LOW],
                 "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: "turnRight" - Motor1=speed, Motor2=speed, Motor3=speed+compensate
-            MovementDirection.TURN_RIGHT: {
+            "turnright": {
                 "dirs": [self.LOW, self.HIGH, self.HIGH],
                 "speeds": [speed, speed, speed + self.config.motor3_compensate]
             },
-            # From old code: "moveLeft" - Motor1=speed*1.5, Motor2=speed, Motor3=0
-            MovementDirection.MOVE_LEFT: {
+            "moveleft": {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [int(speed * 1.5), speed, 0]
             },
-            # From old code: "moveRight" - Motor1=speed*1.5, Motor2=speed, Motor3=speed+compensate
-            MovementDirection.MOVE_RIGHT: {
+            "moveright": {
                 "dirs": [self.LOW, self.LOW, self.HIGH],
                 "speeds": [int(speed * 1.5), speed, speed + self.config.motor3_compensate]
             },
-            MovementDirection.STOP: {
+            "stop": {
                 "dirs": [self.LOW, self.LOW, self.LOW],
                 "speeds": [0, 0, 0]
             }
         }
         
-        config = direction_configs[direction]
+        if mapped_direction not in direction_configs:
+            logger.error(f"Invalid direction: {direction}")
+            return False
         
-        # Set motor directions safely - exactly like old code
+        config = direction_configs[mapped_direction]
+        
+        # Set motor directions
         if self.gpio_initialized:
             try:
                 GPIO.output(self.config.motor1_dir, config["dirs"][0])
@@ -633,48 +1118,38 @@ class RobotController:
     
     def stop(self) -> bool:
         """Stop the robot"""
-        return self.move(MovementDirection.STOP)
+        return self.move("stop")
     
     def emergency_stop(self) -> bool:
-        """Emergency stop with state reset - like old emergency_stop"""
+        """Emergency stop with speech notification"""
         logger.warning("Emergency stop activated")
         
         with self.movement_lock:
             with self.state_lock:
-                self.state.status = RobotStatus.EMERGENCY_STOP
+                self.state.status = "emergency_stop"
+                self.state.last_speech_output = "Emergency stop activated"
                 self._stop_motors_immediate()
+        
+        if self.config.enable_speech_synthesis and self.face_helper:
+            self.face_helper.speak("Emergency stop activated")
         
         return True
     
     def reset_obstacle_detection(self) -> bool:
         """Reset obstacle detection state"""
         self._update_obstacle_state(False)
-        logger.info("Obstacle detection reset - robot can move again")
+        message = "Obstacle detection reset - robot can move again"
+        with self.state_lock:
+            self.state.last_speech_output = message
+        if self.config.enable_speech_synthesis and self.face_helper:
+            self.face_helper.speak("Obstacle cleared, ready to move")
+        logger.info(message)
         return True
     
-    def set_speed(self, speed: int) -> bool:
-        """Set default movement speed"""
-        if 0 <= speed <= 100:
-            self.config.default_speed = speed
-            logger.info(f"Default speed set to {speed}")
-            return True
-        logger.warning(f"Invalid speed value: {speed}. Must be between 0 and 100.")
-        return False
-    
-    def set_motor_compensation(self, compensation: int) -> bool:
-        """Set motor 3 compensation value"""
-        if 0 <= compensation <= 50:
-            self.config.motor3_compensate = compensation
-            logger.info(f"Motor 3 compensation set to {compensation}")
-            return True
-        logger.warning(f"Invalid compensation value: {compensation}. Must be between 0 and 50.")
-        return False
-    
     def parse_command(self, command: str) -> Optional[Tuple[str, Optional[int]]]:
-        """Parse natural language command to movement direction and duration - matching old code logic"""
+        """Parse natural language command"""
         command = command.lower().strip()
         
-        # Movement direction mappings - exactly like old code
         directions = {
             "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
             "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
@@ -685,7 +1160,6 @@ class RobotController:
             "moveright": ["move right", "strafe right", "slide right", "sidestep right"]
         }
         
-        # Time patterns - exactly like old code
         time_patterns = {
             "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
             "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
@@ -719,283 +1193,121 @@ class RobotController:
         
         return (direction, duration_ms) if direction else None
     
-    def get_direction(self, user_input: str) -> Optional[str]:
-        """Extract movement direction from user input - matching old code function"""
-        user_input = user_input.lower()
-        directions = {
-            "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
-            "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
-            "stop": ["stop", "halt", "stand still", "brake", "freeze"],
-            "turnLeft": ["turn left", "rotate left", "spin left"],
-            "turnRight": ["turn right", "rotate right", "spin right"],
-            "moveLeft": ["move left", "strafe left", "slide left", "sidestep left"],
-            "moveRight": ["move right", "strafe right", "slide right", "sidestep right"]
-        }
-        
-        for direction, phrases in directions.items():
-            if any(phrase in user_input for phrase in phrases):
-                return direction
-        return None
-    
-    def convert_to_milliseconds(self, text: str) -> Optional[int]:
-        """Convert time expressions to milliseconds - matching old code function"""
-        text = text.lower()
-        time_patterns = {
-            "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
-            "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
-            "hours": r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?"
-        }
-        
-        for unit, pattern in time_patterns.items():
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    value = float(match.group(1))
-                    if unit == "seconds":
-                        return int(value * 1000)
-                    elif unit == "minutes":
-                        return int(value * 60000)
-                    elif unit == "hours":
-                        return int(value * 3600000)
-                except (ValueError, OverflowError):
-                    logger.warning(f"Invalid duration value: {match.group(1)}")
-                    continue
-        return None
-    
-    async def execute_command_sequence(self, commands: List[str]) -> bool:
-        """Execute a sequence of commands"""
-        for command in commands:
-            parsed = self.parse_command(command)
-            if parsed:
-                direction, duration = parsed
-                if not self.move(direction, duration_ms=duration):
-                    return False
-                
-                if duration:
-                    await asyncio.sleep(duration / 1000)
-                    
-                with self.state_lock:
-                    if self.state.obstacle_detected:
-                        break
-        
-        return True
-    
-    async def process_user_input(self, user_input: str, context: str = "") -> bool:
-        """Process user input for movement commands - matching old code process_user_input logic"""
-        if not user_input:
-            return False
-        
-        # Split commands by "then" for sequential execution - exactly like old code
-        instructions = [instr.strip() for instr in user_input.split("then")]
-        command_sequence = []
-        has_movement = False
-        
-        # Reset states
-        with self.state_lock:
-            self.state.obstacle_detected = False
-        
-        # Parse instructions - exactly like old code
-        for instruction in instructions:
-            direction = self.get_direction(instruction)
-            time_ms = self.convert_to_milliseconds(instruction)
-            
-            # Default turn time - exactly like old code
-            if direction in ["turnLeft", "turnRight"] and time_ms is None:
-                time_ms = 1500
-            
-            if direction and time_ms is not None:
-                command_sequence.append((direction, time_ms))
-                has_movement = True
-            elif direction == "stop":
-                command_sequence.append(("stop", 0))
-                has_movement = True
-        
-        # Execute command sequence - exactly like old code logic
-        if has_movement:
-            logger.info(f"Executing command sequence: {command_sequence}")
-            
-            for command, duration in command_sequence:
-                with self.state_lock:
-                    self.state.last_command = command
-                
-                # Convert old code command names to new enum names
-                command_map = {
-                    "forward": "forward",
-                    "backward": "backward",
-                    "turnLeft": "turnleft",
-                    "turnRight": "turnright",
-                    "moveLeft": "moveleft",
-                    "moveRight": "moveright",
-                    "stop": "stop"
-                }
-                
-                mapped_command = command_map.get(command, command)
-                
-                if not self.move(mapped_command, duration_ms=duration):
-                    break
-                
-                # Check for interrupts - exactly like old code
-                with self.state_lock:
-                    if self.state.obstacle_detected:
-                        break
-                
-                # Wait for command completion
-                if duration > 0:
-                    await asyncio.sleep(duration / 1000)
-            
-            return True
-        
-        return False
-    
     async def chat(self, message: str, context: str = "") -> str:
-        """Chat with AI model - exactly like old code AI chat logic"""
+        """Chat with AI model and respond with speech"""
         if not self.ai_chain:
-            return "AI model not available. Please check Ollama installation."
+            response = "AI model not available. Please check Ollama installation."
+        else:
+            try:
+                result = self.ai_chain.invoke({"context": context, "question": message})
+                response = str(result)
+            except Exception as e:
+                logger.error(f"AI chat error: {e}")
+                response = "Error processing message with AI model."
+        
+        # Update state and speak response
+        with self.state_lock:
+            self.state.last_speech_output = response
+        
+        if self.config.enable_speech_synthesis and self.face_helper:
+            self.face_helper.speak(response)
+        
+        return response
+    
+    async def handle_conversation_mode(self, mode: str) -> str:
+        """Handle different conversation modes (speech, text, auto)"""
+        try:
+            with self.state_lock:
+                self.state.interaction_mode = mode
+            
+            if mode == "speech":
+                # Recognize user first
+                user = self.recognize_user("speech")
+                if user:
+                    greeting = f"Hi {user}, what would you like to ask today?"
+                    self.speak(greeting)
+                    
+                    # Listen for commands
+                    user_input = self.listen_for_speech()
+                    if user_input:
+                        # Try to parse as movement command first
+                        parsed = self.parse_command(user_input)
+                        if parsed:
+                            direction, duration = parsed
+                            success = self.move(direction, duration_ms=duration)
+                            response = f"Movement command {direction} {'executed' if success else 'failed'}"
+                        else:
+                            # Use AI for general conversation
+                            response = await self.chat(user_input)
+                        
+                        return response
+                    else:
+                        return "I didn't hear anything clearly."
+                else:
+                    return "I couldn't recognize you. Please look at the camera."
+            
+            elif mode == "text":
+                user = self.recognize_user("text")
+                if user:
+                    greeting = f"Hi {user}, what would you like to ask today?"
+                    self.speak(greeting)
+                    return greeting
+                else:
+                    return "Please look at the camera for identification."
+            
+            elif mode == "auto":
+                # Automatic interaction based on detected gestures/faces
+                if self.state.hand_gesture in ["waving", "shaking_hands"]:
+                    response = f"I see you're {self.state.hand_gesture.replace('_', ' ')}! How can I help you?"
+                    self.speak(response)
+                    return response
+                elif self.state.current_user != "Unknown":
+                    response = f"Hello {self.state.current_user}! I'm ready for commands."
+                    self.speak(response)
+                    return response
+                else:
+                    return "I'm watching and ready to help!"
+            
+            return "Unknown conversation mode"
+            
+        except Exception as e:
+            logger.error(f"Conversation mode error: {e}")
+            return f"Error in conversation mode: {str(e)}"
+    
+    def get_camera_frame(self) -> Optional[bytes]:
+        """Get current camera frame for web streaming"""
+        if not self.camera or not self.camera.isOpened():
+            return None
         
         try:
-            result = self.ai_chain.invoke({"context": context, "question": message})
-            return str(result)
+            success, frame = self.camera.read()
+            if success:
+                # Flip frame and add overlays
+                frame = cv2.flip(frame, 1)
+                
+                # Add hand detection visualization
+                if self.hand_detector:
+                    frame = self.hand_detector.find_hands(frame, draw=True)
+                
+                # Add status text
+                cv2.putText(frame, f"User: {self.state.current_user}", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Gesture: {self.state.hand_gesture}", 
+                           (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                
+                # Encode frame as JPEG
+                ret, buffer = cv2.imencode('.jpg', frame)
+                if ret:
+                    return buffer.tobytes()
+            
+            return None
         except Exception as e:
-            logger.error(f"AI chat error: {e}")
-            return "Error processing message with AI model."
-    
-    def get_config(self) -> Dict:
-        """Get current configuration"""
-        return {
-            "motor_pins": {
-                "motor1": {"speed": self.config.motor1_speed, "dir": self.config.motor1_dir},
-                "motor2": {"speed": self.config.motor2_speed, "dir": self.config.motor2_dir},
-                "motor3": {"speed": self.config.motor3_speed, "dir": self.config.motor3_dir}
-            },
-            "sensor_pins": {
-                "sensor1": {"trig": self.config.trig1, "echo": self.config.echo1},
-                "sensor2": {"trig": self.config.trig2, "echo": self.config.echo2},
-                "sensor3": {"trig": self.config.trig3, "echo": self.config.echo3}
-            },
-            "settings": {
-                "default_speed": self.config.default_speed,
-                "obstacle_threshold": self.config.obstacle_threshold,
-                "obstacle_clear_threshold": self.config.obstacle_clear_threshold,
-                "pwm_frequency": self.config.pwm_frequency,
-                "sensor_timeout": self.config.sensor_timeout,
-                "motor3_compensate": self.config.motor3_compensate
-            }
-        }
-    
-    # Movement functions matching old code exactly
-    def go_forwards(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
-        """Move forward - matching old goForwards function"""
-        return self.move("forward", speed, time_ms)
-    
-    def go_backwards(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
-        """Move backward - matching old goBackwards function"""
-        return self.move("backward", speed, time_ms)
-    
-    def turn_left(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
-        """Turn left - matching old turnLeft function"""
-        return self.move("turnleft", speed, time_ms)
-    
-    def turn_right(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
-        """Turn right - matching old turnRight function"""
-        return self.move("turnright", speed, time_ms)
-    
-    def move_left(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
-        """Move left - matching old moveLeft function"""
-        return self.move("moveleft", speed, time_ms)
-    
-    def move_right(self, speed: Optional[int] = None, time_ms: Optional[int] = None) -> bool:
-        """Move right - matching old moveRight function"""
-        return self.move("moveright", speed, time_ms)
-    
-    def start_forward(self) -> bool:
-        """Start forward movement - matching old startForward function"""
-        return self.move("forward")
-    
-    def start_backward(self) -> bool:
-        """Start backward movement - matching old startBackward function"""
-        return self.move("backward")
-    
-    def start_turn_left(self) -> bool:
-        """Start left turn - matching old startTurnLeft function"""
-        return self.move("turnleft")
-    
-    def start_turn_right(self) -> bool:
-        """Start right turn - matching old startTurnRight function"""
-        return self.move("turnright")
-    
-    def start_move_left(self) -> bool:
-        """Start left movement - matching old startMoveLeft function"""
-        return self.move("moveleft")
-    
-    def start_move_right(self) -> bool:
-        """Start right movement - matching old startMoveRight function"""
-        return self.move("moveright")
-    
-    def immediate_stop(self) -> bool:
-        """Immediate stop - matching old immediateStop function"""
-        with self.state_lock:
-            self.state.obstacle_detected = False
-        self.interrupt_event.clear()
-        return self.stop()
-    
-    def stop_motors(self, time_ms: int = 0) -> bool:
-        """Stop motors with optional delay - matching old stopMotors function"""
-        with self.state_lock:
-            self.state.obstacle_detected = False
-        self.interrupt_event.clear()
-        
-        success = self.stop()
-        
-        if time_ms > 0:
-            time.sleep(time_ms / 1000)
-        
-        return success
-    
-    def process_immediate_command(self, command: str) -> bool:
-        """Process immediate movement commands - matching old processImmediateCommand"""
-        command = command.strip().lower()
-        command_map = {
-            "forward": self.start_forward,
-            "backward": self.start_backward,
-            "left": self.start_turn_left,
-            "right": self.start_turn_right,
-            "moveleft": self.start_move_left,
-            "moveright": self.start_move_right,
-            "stop": self.immediate_stop
-        }
-        
-        if command in command_map:
-            return command_map[command]()
-        else:
-            logger.warning(f"Unknown immediate command: {command}")
-            return False
-    
-    def process_command(self, command: str, time_ms: int) -> bool:
-        """Process timed movement commands - matching old processCommand"""
-        with self.state_lock:
-            if self.state.obstacle_detected and command != "stop":
-                logger.warning("Command blocked - obstacle detected")
-                return False
-        
-        command_map = {
-            "forward": lambda: self.go_forwards(time_ms=time_ms),
-            "backward": lambda: self.go_backwards(time_ms=time_ms),
-            "turnRight": lambda: self.turn_right(time_ms=time_ms),
-            "turnLeft": lambda: self.turn_left(time_ms=time_ms),
-            "moveRight": lambda: self.move_right(time_ms=time_ms),
-            "moveLeft": lambda: self.move_left(time_ms=time_ms),
-            "stop": lambda: self.stop_motors(time_ms)
-        }
-        
-        if command in command_map:
-            return command_map[command]()
-        else:
-            logger.warning(f"Unknown timed command: {command}")
-            return False
+            logger.error(f"Camera frame error: {e}")
+            return None
     
     def shutdown(self):
-        """Shutdown robot controller with proper cleanup - matching old cleanup logic"""
-        logger.info("Shutting down robot controller...")
+        """Shutdown enhanced robot controller with cleanup"""
+        logger.info("Shutting down enhanced robot controller...")
         
         # Signal shutdown to all threads
         self.shutdown_event.set()
@@ -1008,7 +1320,9 @@ class RobotController:
         # Wait for background threads to finish
         threads_to_join = [
             (self.obstacle_thread, "obstacle detection"),
-            (self.status_thread, "status update")
+            (self.status_thread, "status update"),
+            (self.vision_thread, "vision processing"),
+            (self.hand_detection_thread, "hand detection")
         ]
         
         for thread, name in threads_to_join:
@@ -1018,10 +1332,17 @@ class RobotController:
                 if thread.is_alive():
                     logger.warning(f"{name} thread did not finish gracefully")
         
-        # Cleanup GPIO and PWM - exactly like old code cleanup
+        # Cleanup camera
+        if self.camera and self.camera.isOpened():
+            try:
+                self.camera.release()
+                logger.info("Camera released")
+            except Exception as e:
+                logger.error(f"Camera cleanup error: {e}")
+        
+        # Cleanup GPIO and PWM
         if self.gpio_initialized:
             try:
-                # Stop PWM objects - exactly like old code
                 pwm_objects = [
                     (self.motor1_pwm, "motor1"),
                     (self.motor2_pwm, "motor2"), 
@@ -1036,59 +1357,48 @@ class RobotController:
                         except Exception as e:
                             logger.error(f"Error stopping {name} PWM: {e}")
                 
-                # Cleanup GPIO - exactly like old code
-                try:
-                    GPIO.remove_event_detect(self.config.echo1)
-                except:
-                    pass
-                try:
-                    GPIO.remove_event_detect(self.config.echo2)
-                except:
-                    pass
-                try:
-                    GPIO.remove_event_detect(self.config.echo3)
-                except:
-                    pass
-                
                 GPIO.cleanup()
                 logger.info("GPIO cleanup completed")
                 
             except Exception as e:
                 logger.error(f"GPIO cleanup error: {e}")
         
-        logger.info("Robot controller shutdown complete")
+        logger.info("Enhanced robot controller shutdown complete")
 
 
-# Global robot controller instance
-_robot_controller = None
-_controller_lock = threading.Lock()
+# Global enhanced robot controller instance
+_enhanced_robot_controller = None
+_enhanced_controller_lock = threading.Lock()
 
-def get_robot_controller():
-    """Get or create the global robot controller instance (thread-safe)"""
-    global _robot_controller
-    with _controller_lock:
-        if _robot_controller is None:
-            _robot_controller = RobotController()
-        return _robot_controller
+def get_enhanced_robot_controller():
+    """Get or create the global enhanced robot controller instance"""
+    global _enhanced_robot_controller
+    with _enhanced_controller_lock:
+        if _enhanced_robot_controller is None:
+            _enhanced_robot_controller = EnhancedRobotController()
+        return _enhanced_robot_controller
 
-# Public API functions for FastAPI backend compatibility - matching old code public functions
+# Public API functions for FastAPI backend compatibility
 def get_status() -> Dict:
     """Get current robot status - called by FastAPI"""
     try:
-        return get_robot_controller().get_status()
+        return get_enhanced_robot_controller().get_status()
     except Exception as e:
         logger.error(f"Error getting status: {e}")
         return {
             "status": "error",
             "message": f"Error getting status: {str(e)}",
             "obstacle_detected": False,
-            "gpio_available": False
+            "gpio_available": False,
+            "camera_active": False,
+            "face_recognition_available": False,
+            "speech_recognition_available": False
         }
 
 def move(direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
     """Move robot in specified direction - called by FastAPI"""
     try:
-        return get_robot_controller().move(direction, speed, duration_ms)
+        return get_enhanced_robot_controller().move(direction, speed, duration_ms)
     except Exception as e:
         logger.error(f"Error moving robot: {e}")
         return False
@@ -1096,15 +1406,71 @@ def move(direction: str, speed: Optional[int] = None, duration_ms: Optional[int]
 def stop() -> bool:
     """Stop the robot - called by FastAPI"""
     try:
-        return get_robot_controller().stop()
+        return get_enhanced_robot_controller().stop()
     except Exception as e:
         logger.error(f"Error stopping robot: {e}")
         return False
 
+def speak(text: str) -> bool:
+    """Make robot speak - called by FastAPI"""
+    try:
+        return get_enhanced_robot_controller().speak(text)
+    except Exception as e:
+        logger.error(f"Error speaking: {e}")
+        return False
+
+def listen_for_speech(timeout: int = 5) -> Optional[str]:
+    """Listen for speech input - called by FastAPI"""
+    try:
+        return get_enhanced_robot_controller().listen_for_speech(timeout)
+    except Exception as e:
+        logger.error(f"Error listening for speech: {e}")
+        return None
+
+def recognize_user(mode: str = "auto") -> Optional[str]:
+    """Recognize current user - called by FastAPI"""
+    try:
+        return get_enhanced_robot_controller().recognize_user(mode)
+    except Exception as e:
+        logger.error(f"Error recognizing user: {e}")
+        return None
+
+def register_new_user(name: str) -> bool:
+    """Register new user - called by FastAPI"""
+    try:
+        return get_enhanced_robot_controller().register_new_user(name)
+    except Exception as e:
+        logger.error(f"Error registering user: {e}")
+        return False
+
+def set_interaction_mode(mode: str) -> bool:
+    """Set interaction mode - called by FastAPI"""
+    try:
+        return get_enhanced_robot_controller().set_interaction_mode(mode)
+    except Exception as e:
+        logger.error(f"Error setting interaction mode: {e}")
+        return False
+
+async def handle_conversation_mode(mode: str) -> str:
+    """Handle conversation mode - called by FastAPI"""
+    try:
+        return await get_enhanced_robot_controller().handle_conversation_mode(mode)
+    except Exception as e:
+        logger.error(f"Error handling conversation mode: {e}")
+        return f"Error: {str(e)}"
+
+def get_camera_frame() -> Optional[bytes]:
+    """Get camera frame - called by FastAPI"""
+    try:
+        return get_enhanced_robot_controller().get_camera_frame()
+    except Exception as e:
+        logger.error(f"Error getting camera frame: {e}")
+        return None
+
 def parse_command(command: str) -> Optional[Tuple[str, Optional[int]]]:
     """Parse natural language command - called by FastAPI"""
     try:
-        return get_robot_controller().parse_command(command)
+        return get_enhanced_robot_controller().parse_command(command)
     except Exception as e:
         logger.error(f"Error parsing command: {e}")
         return None
@@ -1112,7 +1478,7 @@ def parse_command(command: str) -> Optional[Tuple[str, Optional[int]]]:
 async def chat(message: str, context: str = "") -> str:
     """Chat with AI model - called by FastAPI"""
     try:
-        return await get_robot_controller().chat(message, context)
+        return await get_enhanced_robot_controller().chat(message, context)
     except Exception as e:
         logger.error(f"Error in chat: {e}")
         return "Error processing chat message."
@@ -1120,7 +1486,7 @@ async def chat(message: str, context: str = "") -> str:
 def emergency_stop() -> bool:
     """Emergency stop - called by FastAPI"""
     try:
-        return get_robot_controller().emergency_stop()
+        return get_enhanced_robot_controller().emergency_stop()
     except Exception as e:
         logger.error(f"Error in emergency stop: {e}")
         return False
@@ -1128,157 +1494,30 @@ def emergency_stop() -> bool:
 def reset_obstacle_detection() -> bool:
     """Reset obstacle detection - called by FastAPI"""
     try:
-        return get_robot_controller().reset_obstacle_detection()
+        return get_enhanced_robot_controller().reset_obstacle_detection()
     except Exception as e:
         logger.error(f"Error resetting obstacle detection: {e}")
         return False
 
-def get_sensor_data() -> Dict:
-    """Get sensor data - called by FastAPI"""
-    try:
-        return get_robot_controller().get_sensor_data()
-    except Exception as e:
-        logger.error(f"Error getting sensor data: {e}")
-        return {
-            "distances": [],
-            "min_distance": None,
-            "obstacle_threshold": 30.0,
-            "obstacle_detected": False,
-            "sensor_distances": {},
-            "obstacle_sensor": ""
-        }
-
-def set_speed(speed: int) -> bool:
-    """Set default speed - called by FastAPI"""
-    try:
-        return get_robot_controller().set_speed(speed)
-    except Exception as e:
-        logger.error(f"Error setting speed: {e}")
-        return False
-
-def set_motor_compensation(compensation: int) -> bool:
-    """Set motor compensation - called by FastAPI"""
-    try:
-        return get_robot_controller().set_motor_compensation(compensation)
-    except Exception as e:
-        logger.error(f"Error setting motor compensation: {e}")
-        return False
-
-def get_config() -> Dict:
-    """Get configuration - called by FastAPI"""
-    try:
-        return get_robot_controller().get_config()
-    except Exception as e:
-        logger.error(f"Error getting config: {e}")
-        return {}
-
 def shutdown_robot():
     """Shutdown robot controller - called by FastAPI on app shutdown"""
-    global _robot_controller
-    with _controller_lock:
-        if _robot_controller is not None:
-            _robot_controller.shutdown()
-            _robot_controller = None
+    global _enhanced_robot_controller
+    with _enhanced_controller_lock:
+        if _enhanced_robot_controller is not None:
+            _enhanced_robot_controller.shutdown()
+            _enhanced_robot_controller = None
 
-# Legacy function aliases for backward compatibility with old code
-def goForwards(speed: int, time_ms: int) -> bool:
-    """Legacy function - use go_forwards instead"""
-    return get_robot_controller().go_forwards(speed, time_ms)
-
-def goBackwards(speed: int, time_ms: int) -> bool:
-    """Legacy function - use go_backwards instead"""
-    return get_robot_controller().go_backwards(speed, time_ms)
-
-def turnLeft(speed: int, time_ms: int) -> bool:
-    """Legacy function - use turn_left instead"""
-    return get_robot_controller().turn_left(speed, time_ms)
-
-def turnRight(speed: int, time_ms: int) -> bool:
-    """Legacy function - use turn_right instead"""
-    return get_robot_controller().turn_right(speed, time_ms)
-
-def moveLeft(speed: int, time_ms: int) -> bool:
-    """Legacy function - use move_left instead"""
-    return get_robot_controller().move_left(speed, time_ms)
-
-def moveRight(speed: int, time_ms: int) -> bool:
-    """Legacy function - use move_right instead"""
-    return get_robot_controller().move_right(speed, time_ms)
-
-def startForward() -> bool:
-    """Legacy function - use start_forward instead"""
-    return get_robot_controller().start_forward()
-
-def startBackward() -> bool:
-    """Legacy function - use start_backward instead"""
-    return get_robot_controller().start_backward()
-
-def startTurnLeft() -> bool:
-    """Legacy function - use start_turn_left instead"""
-    return get_robot_controller().start_turn_left()
-
-def startTurnRight() -> bool:
-    """Legacy function - use start_turn_right instead"""
-    return get_robot_controller().start_turn_right()
-
-def startMoveLeft() -> bool:
-    """Legacy function - use start_move_left instead"""
-    return get_robot_controller().start_move_left()
-
-def startMoveRight() -> bool:
-    """Legacy function - use start_move_right instead"""
-    return get_robot_controller().start_move_right()
-
-def immediateStop() -> bool:
-    """Legacy function - use immediate_stop instead"""
-    return get_robot_controller().immediate_stop()
-
-def stopMotors(time_ms: int) -> bool:
-    """Legacy function - use stop_motors instead"""
-    return get_robot_controller().stop_motors(time_ms)
-
-def processImmediateCommand(command: str) -> bool:
-    """Legacy function - use process_immediate_command instead"""
-    return get_robot_controller().process_immediate_command(command)
-
-def processCommand(command: str, time_ms: int) -> bool:
-    """Legacy function - use process_command instead"""
-    return get_robot_controller().process_command(command, time_ms)
-
-def get_distance(trig_pin: int, echo_pin: int) -> float:
-    """Legacy function - get distance from ultrasonic sensor"""
-    return get_robot_controller()._get_distance(trig_pin, echo_pin)
-
-# Factory function for easy initialization
-def create_robot(config: Optional[RobotConfig] = None) -> RobotController:
-    """Create a robot controller instance"""
-    return RobotController(config)
-
-# Context manager for proper resource cleanup
-class RobotManager:
-    """Context manager for robot controller with automatic cleanup"""
-    
-    def __init__(self, config: Optional[RobotConfig] = None):
-        self.config = config
-        self.robot = None
-    
-    def __enter__(self) -> RobotController:
-        self.robot = RobotController(self.config)
-        return self.robot
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.robot:
-            self.robot.shutdown()
-
-if __name__ == "__main__":
-    print("🤖 Robot Movement Controller - Production Version")
-    print("=" * 50)
-    print("Features:")
-    print("• Full backward compatibility with old code")
-    print("• Proper motor compensation")
-    print("• Thread-safe operation")
-    print("• Enhanced obstacle detection")
-    print("• AI integration")
-    print("• FastAPI integration ready")
-    print("=" * 50)
-    print("✅ Robot controller module loaded successfully")
+# if __name__ == "__main__":
+#     print("🤖 Enhanced Robot Movement Controller - Production Version")
+#     print("=" * 60)
+#     print("Features:")
+#     print("• Full backward compatibility with old code")
+#     print("• Face recognition and user management") 
+#     print("• Speech synthesis and recognition")
+#     print("• Hand gesture detection")
+#     print("• Enhanced obstacle detection")
+#     print("• AI integration with speech responses")
+#     print("• Camera streaming support")
+#     print("• FastAPI integration ready")
+#     print("=" * 60)
+#     print("✅ Enhanced robot controller module loaded successfully")
