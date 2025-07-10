@@ -3,11 +3,6 @@ import mediapipe as mp
 import time
 from collections import deque
 
-current_time = 0
-wave_time = 2
-handshake_time = 2
-wait_time = 2
-
 class handDetector():
     def __init__(self, mode=False, maxHands = 2, detectionCon=0.5,trackCon=0.5):
         self.mode = mode
@@ -102,7 +97,6 @@ def high_five_position(lmList, detector):
 
 
 def is_waving(lmList, detector, index_x_history):
-    if ((time.time - current_time) < wait_time): return False
     if len(lmList) < 21:
         return False
     
@@ -115,9 +109,7 @@ def is_waving(lmList, detector, index_x_history):
     # Check if index finger tip is swinging side to side
     index_motion = max(index_x_history) - min(index_x_history)
 
-    if(index_motion <= 40): return False
-    current_time = time.time()
-    return True
+    return index_motion > 40
 
 def fingers_close_together(lmList):
     if len(lmList) < 21:
@@ -130,11 +122,9 @@ def fingers_close_together(lmList):
     return True
 
 def is_shaking_hands(lmList):
-    if ((time.time - current_time) < wait_time): return False
     if not fingers_close_together(lmList): return False
     if abs(lmList[5][2]-lmList[0][2]) > 50:
         return False
-    current_time = time.time()
     return True
 
 def main():
