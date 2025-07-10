@@ -1,4 +1,4 @@
-# enhanced_app.py - FastAPI backend with face recognition and speech capabilities
+# enhanced_app.py - Fixed FastAPI backend with proper camera handling
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -11,9 +11,15 @@ import os
 from typing import Dict, List, Optional
 import uvicorn
 import io
+import time
 
 # Import enhanced robot movement
-import robot_movement as robot_movement
+try:
+    import robot_movement as robot_movement
+    ROBOT_AVAILABLE = True
+except ImportError as e:
+    ROBOT_AVAILABLE = False
+    logging.error(f"Robot movement module not available: {e}")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,7 +30,7 @@ app = FastAPI(
     description="Web interface for omni-wheel robot with face recognition and speech"
 )
 
-# Enable CORS
+# Enable CORS with more specific settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -80,16 +86,20 @@ class EnhancedRobotStatusResponse(BaseModel):
     mediapipe_available: bool
 
 # Global state
-robot_movement_available = True
+robot_movement_available = ROBOT_AVAILABLE
 background_task_created = False
 
-# Check if enhanced robot movement is available
-try:
-    robot_movement.get_status()
-    logger.info("Enhanced robot movement module initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize enhanced robot movement module: {e}")
-    robot_movement_available = False
+# Test robot movement availability
+if ROBOT_AVAILABLE:
+    try:
+        status = robot_movement.get_status()
+        logger.info("Enhanced robot movement module initialized successfully")
+        logger.info(f"Camera active: {status.get('camera_active', False)}")
+        logger.info(f"Face recognition: {status.get('face_recognition_available', False)}")
+        logger.info(f"Hand detection: {status.get('mediapipe_available', False)}")
+    except Exception as e:
+        logger.error(f"Failed to initialize enhanced robot movement module: {e}")
+        robot_movement_available = False
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -136,16 +146,44 @@ async def broadcast_status():
         try:
             if len(manager.active_connections) > 0:
                 if robot_movement_available:
-                    status = robot_movement.get_status()
-                    await manager.broadcast(json.dumps({
-                        "type": "status_update",
-                        "data": status
-                    }))
+                    try:
+                        status = robot_movement.get_status()
+                        await manager.broadcast(json.dumps({
+                            "type": "status_update",
+                            "data": status
+                        }))
+                    except Exception as e:
+                        logger.error(f"Error getting robot status: {e}")
+                        # Send error status if robot fails
+                        await manager.broadcast(json.dumps({
+                            "type": "status_update",
+                            "data": {
+                                "status": "error",
+                                "message": f"Robot status error: {str(e)}",
+                                "obstacle_detected": False,
+                                "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
+                                "last_distances": [],
+                                "last_command": "",
+                                "uptime": 0.0,
+                                "gpio_available": False,
+                                "current_user": "Unknown",
+                                "faces_detected": [],
+                                "hand_gesture": "none",
+                                "camera_active": False,
+                                "last_speech_output": "",
+                                "listening": False,
+                                "speech_recognition_active": False,
+                                "interaction_mode": "idle",
+                                "face_recognition_available": False,
+                                "speech_recognition_available": False,
+                                "mediapipe_available": False
+                            }
+                        }))
                 else:
                     await manager.broadcast(json.dumps({
                         "type": "status_update",
                         "data": {
-                            "status": "error",
+                            "status": "disconnected",
                             "message": "Enhanced robot movement module not available",
                             "obstacle_detected": False,
                             "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
@@ -184,8 +222,11 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on app shutdown"""
     if robot_movement_available:
-        robot_movement.shutdown_robot()
-        logger.info("Robot controller shutdown completed")
+        try:
+            robot_movement.shutdown_robot()
+            logger.info("Robot controller shutdown completed")
+        except Exception as e:
+            logger.error(f"Error during robot shutdown: {e}")
 
 @app.get("/")
 async def read_root():
@@ -391,25 +432,54 @@ async def handle_conversation(conversation_request: ConversationRequest):
 
 @app.get("/api/camera/stream")
 async def camera_stream():
-    """Stream camera feed"""
+    """Stream camera feed with improved error handling"""
     if not robot_movement_available:
         raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
     def generate_frames():
+        """Generate camera frames with better error handling"""
+        frame_count = 0
+        last_frame_time = time.time()
+        
         while True:
             try:
                 frame_bytes = robot_movement.get_camera_frame()
+                current_time = time.time()
+                
                 if frame_bytes:
+                    frame_count += 1
+                    last_frame_time = current_time
                     yield (b'--frame\r\n'
                            b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                    
+                    # Limit frame rate to ~15 FPS to reduce load
+                    time.sleep(0.067)  
                 else:
-                    # Send a blank frame if camera is not available
-                    break
+                    # If no frame for 5 seconds, break the stream
+                    if current_time - last_frame_time > 5.0:
+                        logger.warning("No camera frames for 5 seconds, ending stream")
+                        break
+                    
+                    # Send a small delay and try again
+                    time.sleep(0.1)
+                    
             except Exception as e:
                 logger.error(f"Camera streaming error: {e}")
                 break
     
-    return StreamingResponse(generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+    try:
+        return StreamingResponse(
+            generate_frames(), 
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Camera stream initialization error: {e}")
+        raise HTTPException(status_code=500, detail=f"Camera stream error: {str(e)}")
 
 @app.post("/api/direction")
 async def move_direction(direction_command: DirectionCommand):
@@ -630,21 +700,50 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
 
-# Health check endpoint
+# Health check endpoint with better error handling
 @app.get("/api/health")
 async def health_check():
     """Enhanced health check endpoint"""
-    return {
-        "status": "healthy",
-        "robot_available": robot_movement_available,
-        "active_connections": len(manager.active_connections),
-        "features": {
-            "face_recognition": robot_movement.get_status().get("face_recognition_available", False) if robot_movement_available else False,
-            "speech_recognition": robot_movement.get_status().get("speech_recognition_available", False) if robot_movement_available else False,
-            "hand_detection": robot_movement.get_status().get("mediapipe_available", False) if robot_movement_available else False,
-            "camera": robot_movement.get_status().get("camera_active", False) if robot_movement_available else False
+    if not robot_movement_available:
+        return {
+            "status": "degraded",
+            "robot_available": False,
+            "active_connections": len(manager.active_connections),
+            "features": {
+                "face_recognition": False,
+                "speech_recognition": False,
+                "hand_detection": False,
+                "camera": False
+            }
         }
-    }
+    
+    try:
+        status = robot_movement.get_status()
+        return {
+            "status": "healthy",
+            "robot_available": True,
+            "active_connections": len(manager.active_connections),
+            "features": {
+                "face_recognition": status.get("face_recognition_available", False),
+                "speech_recognition": status.get("speech_recognition_available", False),
+                "hand_detection": status.get("mediapipe_available", False),
+                "camera": status.get("camera_active", False)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "error",
+            "robot_available": False,
+            "active_connections": len(manager.active_connections),
+            "error": str(e),
+            "features": {
+                "face_recognition": False,
+                "speech_recognition": False,
+                "hand_detection": False,
+                "camera": False
+            }
+        }
 
 # Serve static files (React frontend)
 try:
