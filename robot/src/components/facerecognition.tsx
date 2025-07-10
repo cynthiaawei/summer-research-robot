@@ -35,13 +35,42 @@ const FaceRecognitionGate: React.FC = () => {
   const mountedRef = useRef(true);
   const connectionTimeoutRef = useRef<number | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const navigationTimeoutRef = useRef<number | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      if (connectionTimeoutRef.current) {
+        window.clearTimeout(connectionTimeoutRef.current);
+      }
+      if (pingIntervalRef.current) {
+        window.clearInterval(pingIntervalRef.current);
+      }
+      if (navigationTimeoutRef.current) {
+        window.clearTimeout(navigationTimeoutRef.current);
+      }
     };
   }, []);
+
+  // Navigation helper function
+  const navigateToMenu = (user: string) => {
+    console.log(`Navigating to menu for user: ${user}`);
+    setCurrentUser(user);
+    
+    // Clear any existing navigation timeout
+    if (navigationTimeoutRef.current) {
+      window.clearTimeout(navigationTimeoutRef.current);
+    }
+    
+    // Navigate after a short delay to show the welcome message
+    navigationTimeoutRef.current = window.setTimeout(() => {
+      if (mountedRef.current) {
+        console.log('Executing navigation to /menu');
+        window.location.href = '/menu';
+      }
+    }, 2000); // Reduced from 3000 to 2000ms for faster navigation
+  };
 
   // Setup WebSocket connection
   useEffect(() => {
@@ -101,28 +130,27 @@ const FaceRecognitionGate: React.FC = () => {
         
         try {
           const data: WSMessage = JSON.parse(event.data);
+          console.log('Received WebSocket message:', data.type, data);
           
           switch (data.type) {
             case 'status_update':
               setStatus(data.data);
               
-              // Handle different recognition states based on backend status
+              // Handle state transitions based on backend status
               if (data.data.awaiting_registration && recognitionStage !== 'unknown') {
+                console.log('Backend says awaiting registration - switching to unknown stage');
                 setRecognitionStage('unknown');
-                setMessage('I don\'t recognize you. Please tell me your name.');
-              } else if (data.data.current_user !== 'Unknown' && 
+                setMessage('I don\'t recognize you. Please tell me your name to register.');
+              } else if (data.data.current_user && 
+                        data.data.current_user !== 'Unknown' && 
                         data.data.current_user !== '' && 
+                        !data.data.awaiting_registration &&
                         recognitionStage !== 'recognized') {
+                console.log(`Backend recognized user: ${data.data.current_user}`);
                 setUserName(data.data.current_user);
                 setRecognitionStage('recognized');
-                setMessage(`Welcome back, ${data.data.current_user}!`);
-                setCurrentUser(data.data.current_user);
-                
-                setTimeout(() => {
-                  if (mountedRef.current) {
-                    window.location.href = '/menu';
-                  }
-                }, 3000);
+                setMessage(`Welcome back, ${data.data.current_user}! Redirecting to controls...`);
+                navigateToMenu(data.data.current_user);
               } else if (data.data.face_recognition_attempts > 0 && 
                         data.data.face_recognition_attempts < 3 && 
                         recognitionStage === 'scanning') {
@@ -131,40 +159,33 @@ const FaceRecognitionGate: React.FC = () => {
               break;
               
             case 'user_recognized':
+              console.log('User recognized event:', data.data);
               if (data.data.success && data.data.user && data.data.user !== 'Unknown') {
                 setUserName(data.data.user);
                 setRecognitionStage('recognized');
-                setMessage(`Welcome back, ${data.data.user}!`);
-                setCurrentUser(data.data.user);
-                
-                setTimeout(() => {
-                  if (mountedRef.current) {
-                    window.location.href = '/menu';
-                  }
-                }, 3000);
+                setMessage(`Welcome back, ${data.data.user}! Redirecting to controls...`);
+                navigateToMenu(data.data.user);
+              } else {
+                console.log('User recognition failed or returned Unknown');
               }
               break;
               
             case 'user_registered':
+              console.log('User registration event:', data.data);
+              setIsLoading(false);
               if (data.data.success) {
                 setUserName(data.data.name);
                 setRecognitionStage('recognized');
-                setMessage(`Nice to meet you, ${data.data.name}! Registration successful.`);
-                setCurrentUser(data.data.name);
-                
-                setTimeout(() => {
-                  if (mountedRef.current) {
-                    window.location.href = '/menu';
-                  }
-                }, 3000);
+                setMessage(`Nice to meet you, ${data.data.name}! Registration successful. Redirecting...`);
+                navigateToMenu(data.data.name);
               } else {
                 setMessage('Registration failed. Please try again.');
                 setRecognitionStage('unknown');
               }
-              setIsLoading(false);
               break;
               
             case 'face_recognition_reset':
+              console.log('Face recognition reset event:', data.data);
               if (data.data.success) {
                 setRecognitionStage('scanning');
                 setMessage('Scanning for faces...');
@@ -177,6 +198,7 @@ const FaceRecognitionGate: React.FC = () => {
               break;
               
             case 'error':
+              console.error('WebSocket error message:', data.data.message);
               setMessage(`Error: ${data.data.message}`);
               setIsLoading(false);
               break;
@@ -262,8 +284,10 @@ const FaceRecognitionGate: React.FC = () => {
 
   const sendWebSocketMessage = (type: string, data: any = {}) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
+      console.log('Sending WebSocket message:', type, data);
       ws.send(JSON.stringify({ type, data }));
     } else {
+      console.warn('WebSocket not connected, cannot send message');
       setMessage('Not connected to robot system');
     }
   };
@@ -272,27 +296,31 @@ const FaceRecognitionGate: React.FC = () => {
     if (registrationName.trim()) {
       setIsLoading(true);
       setMessage('Registering your face...');
+      console.log('Starting registration for:', registrationName.trim());
       sendWebSocketMessage('register_user', { name: registrationName.trim() });
     }
   };
 
   const skipToMenu = () => {
+    console.log('Skipping to menu as Guest');
     setCurrentUser('Guest');
     window.location.href = '/menu';
   };
 
   const proceedToControls = () => {
-    setCurrentUser(userName);
-    window.location.href = '/menu';
+    console.log('Manually proceeding to controls for:', userName);
+    navigateToMenu(userName);
   };
 
   const retryRecognition = () => {
+    console.log('Retrying face recognition');
     setRecognitionStage('scanning');
     setMessage('Resetting face recognition...');
     sendWebSocketMessage('reset_face_recognition');
   };
 
   const refreshConnection = () => {
+    console.log('Refreshing WebSocket connection');
     if (ws) {
       ws.close();
     }
@@ -434,6 +462,15 @@ const FaceRecognitionGate: React.FC = () => {
       borderRadius: '50%',
       animation: 'spin 1s linear infinite',
       marginRight: '10px'
+    },
+    debugInfo: {
+      marginTop: '2rem',
+      padding: '1rem',
+      background: 'rgba(240, 244, 248, 0.8)',
+      borderRadius: '12px',
+      fontSize: '0.8rem',
+      color: '#4a5568',
+      textAlign: 'left' as const
     }
   };
 
@@ -569,6 +606,15 @@ const FaceRecognitionGate: React.FC = () => {
                 )}
               </div>
             )}
+
+            {/* Debug Information */}
+            <div style={styles.debugInfo}>
+              <div><strong>Debug Info:</strong></div>
+              <div>Recognition Stage: {recognitionStage}</div>
+              <div>Backend Awaiting Registration: {status?.awaiting_registration ? 'Yes' : 'No'}</div>
+              <div>Backend Current User: {status?.current_user || 'None'}</div>
+              <div>Backend Attempts: {status?.face_recognition_attempts || 0}/3</div>
+            </div>
           </>
         )}
 
