@@ -21,6 +21,10 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
     const savedUser = localStorage.getItem('robotUser');
     if (savedUser) {
       setCurrentUserState(savedUser);
+    } else {
+      // Set default guest if no user found
+      setCurrentUserState('Guest');
+      localStorage.setItem('robotUser', 'Guest');
     }
   }, []);
 
@@ -30,8 +34,8 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
   };
 
   const logout = () => {
-    setCurrentUserState('');
-    localStorage.removeItem('robotUser');
+    setCurrentUserState('Guest');
+    localStorage.setItem('robotUser', 'Guest');
     // Navigate back to face recognition
     window.location.href = '/';
   };
@@ -58,7 +62,7 @@ export const useUser = () => {
   return context;
 };
 
-// User Header Component - shows "Hi {name}" on every page
+// Enhanced User Header Component - shows "Hi {name}" on every page
 interface UserHeaderProps {
   showLogout?: boolean;
 }
@@ -66,16 +70,20 @@ interface UserHeaderProps {
 export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => {
   const { currentUser, isGuest, logout } = useUser();
 
-  if (!currentUser) {
-    return null;
-  }
+  // Always show something, even if currentUser is empty
+  const displayName = currentUser || 'Guest';
 
   const headerStyle = {
+    position: 'fixed' as const,
+    top: '1rem',
+    left: '1rem',
+    right: '1rem',
+    zIndex: 1000,
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '1rem 2rem',
-    background: 'rgba(255, 255, 255, 0.9)',
+    background: 'rgba(255, 255, 255, 0.95)',
     backdropFilter: 'blur(10px)',
     borderRadius: '12px',
     marginBottom: '1rem',
@@ -85,7 +93,7 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
 
   const greetingStyle = {
     fontSize: '1.2rem',
-    fontWeight: '600',
+    fontWeight: '600' as const,
     color: '#2d3748',
     display: 'flex',
     alignItems: 'center',
@@ -104,7 +112,7 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
     background: 'linear-gradient(135deg, #f56565, #e53e3e)',
     color: 'white',
     fontSize: '0.9rem',
-    fontWeight: '600',
+    fontWeight: '600' as const,
     transition: 'all 0.3s ease'
   };
 
@@ -123,7 +131,7 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
           {isGuest ? '👤' : '👋'}
         </span>
         <span>
-          {isGuest ? 'Welcome, Guest!' : `Hi, ${currentUser}!`}
+          {isGuest ? `Welcome, ${displayName}!` : `Hi, ${displayName}!`}
         </span>
       </div>
       

@@ -259,9 +259,7 @@ const NavButtons = () => {
   return (
     <div style={containerStyle}>
       {/* User Header - Shows "Hi {name}" */}
-      <div style={{ position: 'fixed', top: '1rem', left: '1rem', right: '1rem', zIndex: 1000 }}>
-        <UserHeader />
-      </div>
+      <UserHeader />
 
       <div style={cardStyle}>
         <h1 style={titleStyle}>Enhanced Robot Control Center</h1>

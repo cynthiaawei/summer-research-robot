@@ -68,12 +68,22 @@ const TextButton: React.FC = () => {
 
   const socketRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
+  const mountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     let pingId: number;
     let reconnectTimer: number;
 
     const connect = () => {
+      if (!mountedRef.current) return;
+      
       if (retryCount >= maxRetries) {
         setResponse({ message: 'Max WS retries reached', isError: true });
         return;
@@ -83,6 +93,7 @@ const TextButton: React.FC = () => {
       socketRef.current = ws;
 
       ws.onopen = () => {
+        if (!mountedRef.current) return;
         console.log('WS connected');
         setResponse({ message: 'Connected to enhanced robot', isError: false });
         setRetryCount(0);
@@ -95,6 +106,8 @@ const TextButton: React.FC = () => {
       };
 
       ws.onmessage = ({ data }) => {
+        if (!mountedRef.current) return;
+        
         let msg: WSMessage;
         try {
           msg = JSON.parse(data);
@@ -167,6 +180,8 @@ const TextButton: React.FC = () => {
       };
 
       ws.onclose = () => {
+        if (!mountedRef.current) return;
+        
         console.warn('WS closed — reconnecting');
         clearInterval(pingId);
         reconnectTimer = window.setTimeout(() => {
@@ -192,6 +207,7 @@ const TextButton: React.FC = () => {
   }, [showCamera]);
 
   const addToConversationHistory = (message: string) => {
+    if (!mountedRef.current) return;
     setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
   };
 
@@ -292,9 +308,7 @@ const TextButton: React.FC = () => {
       `}</style>
 
       {/* User Header - Shows "Hi {name}" */}
-      <div style={{ position: 'fixed', top: '1rem', left: '1rem', right: '1rem', zIndex: 1000 }}>
-        <UserHeader />
-      </div>
+      <UserHeader />
 
       <div style={{ ...styles.card, marginTop: '5rem' }}>
         <h2 style={styles.title}>Enhanced Text Command Control</h2>
@@ -533,7 +547,8 @@ const styles = {
     display: 'flex' as const,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: '2rem'
+    padding: '2rem',
+    paddingTop: '6rem'
   },
   card: {
     background: 'rgba(255,255,255,0.95)',

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useUser } from './UserContext';
 
 interface FaceRecognitionStatus {
   current_user: string;
@@ -15,6 +16,7 @@ type WSMessage =
   | { type: 'error'; data: { message: string } };
 
 const FaceRecognitionGate: React.FC = () => {
+  const { setCurrentUser } = useUser();
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [status, setStatus] = useState<FaceRecognitionStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -26,18 +28,29 @@ const FaceRecognitionGate: React.FC = () => {
 
   const cameraRef = useRef<HTMLImageElement>(null);
   const recognitionIntervalRef = useRef<any>(null);
-  const scanAttemptsRef = useRef<number>(0); // Use ref instead of state
+  const scanAttemptsRef = useRef<number>(0);
+  const mountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Setup WebSocket connection
   useEffect(() => {
     let reconnectTimer: number;
     
     const connect = () => {
+      if (!mountedRef.current) return;
+      
       setConnectionStatus('connecting');
       const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
       setWs(websocket);
 
       websocket.onopen = () => {
+        if (!mountedRef.current) return;
         console.log('WebSocket connected');
         setConnectionStatus('connected');
         setMessage('Connected to robot - initializing face recognition...');
@@ -45,6 +58,8 @@ const FaceRecognitionGate: React.FC = () => {
       };
 
       websocket.onmessage = (event) => {
+        if (!mountedRef.current) return;
+        
         try {
           const data: WSMessage = JSON.parse(event.data);
           
@@ -58,13 +73,19 @@ const FaceRecognitionGate: React.FC = () => {
                 setRecognitionStage('recognized');
                 setMessage(`Welcome back, ${data.data.user}!`);
                 sendWebSocketMessage('speech_command', { text: `Hello ${data.data.user}! Welcome back to the robot control system.` });
+                
+                // Set user in context and navigate
+                setCurrentUser(data.data.user);
+                
                 // Clear interval when user is recognized
                 if (recognitionIntervalRef.current) {
                   clearInterval(recognitionIntervalRef.current);
                   recognitionIntervalRef.current = null;
                 }
                 setTimeout(() => {
-                  window.location.href = '/menu';
+                  if (mountedRef.current) {
+                    window.location.href = '/menu';
+                  }
                 }, 3000);
               } else {
                 // Increment scan attempts and check if we should switch to unknown stage
@@ -89,8 +110,14 @@ const FaceRecognitionGate: React.FC = () => {
                 setRecognitionStage('recognized');
                 setMessage(`Nice to meet you, ${data.data.name}! Registration successful.`);
                 sendWebSocketMessage('speech_command', { text: `Nice to meet you ${data.data.name}! You are now registered. Welcome to the robot control system.` });
+                
+                // Set user in context and navigate
+                setCurrentUser(data.data.name);
+                
                 setTimeout(() => {
-                  window.location.href = '/menu';
+                  if (mountedRef.current) {
+                    window.location.href = '/menu';
+                  }
                 }, 3000);
               } else {
                 setMessage('Registration failed. Please try again.');
@@ -115,6 +142,8 @@ const FaceRecognitionGate: React.FC = () => {
       };
 
       websocket.onclose = () => {
+        if (!mountedRef.current) return;
+        
         console.log('WebSocket closed');
         setConnectionStatus('disconnected');
         setMessage('Disconnected - reconnecting...');
@@ -126,7 +155,9 @@ const FaceRecognitionGate: React.FC = () => {
         }
         
         reconnectTimer = window.setTimeout(() => {
-          connect();
+          if (mountedRef.current) {
+            connect();
+          }
         }, 3000);
       };
     };
@@ -151,6 +182,11 @@ const FaceRecognitionGate: React.FC = () => {
     if (cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
       img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+      
+      // Handle image load errors
+      img.onerror = () => {
+        console.warn('Camera stream not available');
+      };
     }
   }, [connectionStatus]);
 
@@ -170,7 +206,9 @@ const FaceRecognitionGate: React.FC = () => {
     }
     
     recognitionIntervalRef.current = setInterval(() => {
-      sendWebSocketMessage('recognize_user', { mode: 'auto' });
+      if (mountedRef.current) {
+        sendWebSocketMessage('recognize_user', { mode: 'auto' });
+      }
     }, 2000);
   };
 
@@ -178,18 +216,17 @@ const FaceRecognitionGate: React.FC = () => {
     if (registrationName.trim()) {
       setIsLoading(true);
       setMessage('Registering your face...');
-      localStorage.setItem('robotUser', registrationName.trim());
       sendWebSocketMessage('register_user', { name: registrationName.trim() });
     }
   };
 
   const skipToMenu = () => {
-    localStorage.setItem('robotUser', 'Guest');
+    setCurrentUser('Guest');
     window.location.href = '/menu';
   };
 
   const proceedToControls = () => {
-    localStorage.setItem('robotUser', userName);
+    setCurrentUser(userName);
     window.location.href = '/menu';
   };
 

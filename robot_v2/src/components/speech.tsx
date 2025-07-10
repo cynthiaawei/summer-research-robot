@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { UserHeader } from './UserContext';
 
 interface EnhancedRobotStatus {
   status: string;
@@ -62,6 +63,14 @@ const Speech: React.FC = () => {
 
   const socketRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
+  const mountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // Initialize speech recognition
   useEffect(() => {
@@ -116,7 +125,7 @@ const Speech: React.FC = () => {
     } else {
       setBrowserSupported(false);
     }
-  }, []);
+  }, [finalTranscript]);
 
   // WebSocket connection
   useEffect(() => {
@@ -124,6 +133,8 @@ const Speech: React.FC = () => {
     let reconnectTimer: number;
 
     const connect = () => {
+      if (!mountedRef.current) return;
+      
       if (retryCount >= maxRetries) {
         setResponse({ message: 'Max WS retries reached', isError: true });
         return;
@@ -133,6 +144,7 @@ const Speech: React.FC = () => {
       socketRef.current = ws;
 
       ws.onopen = () => {
+        if (!mountedRef.current) return;
         console.log('WebSocket connected');
         setResponse({ message: 'Connected to enhanced robot', isError: false });
         setRetryCount(0);
@@ -145,6 +157,8 @@ const Speech: React.FC = () => {
       };
 
       ws.onmessage = (event) => {
+        if (!mountedRef.current) return;
+        
         let msg: WSMessage;
         try {
           msg = JSON.parse(event.data);
@@ -229,6 +243,8 @@ const Speech: React.FC = () => {
       };
 
       ws.onclose = () => {
+        if (!mountedRef.current) return;
+        
         console.warn('WebSocket closed, retrying...');
         clearInterval(pingId);
         reconnectTimer = window.setTimeout(() => {
@@ -254,6 +270,7 @@ const Speech: React.FC = () => {
   }, [showCamera]);
 
   const addToConversationHistory = (message: string) => {
+    if (!mountedRef.current) return;
     setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
   };
 
@@ -343,6 +360,7 @@ const Speech: React.FC = () => {
   if (!browserSupported) {
     return (
       <div style={styles.container}>
+        <UserHeader />
         <div style={styles.card}>
           <h2 style={styles.title}>Enhanced Speech Control</h2>
           <div style={styles.errorMessage}>
@@ -361,6 +379,8 @@ const Speech: React.FC = () => {
   return (
     <div style={styles.container}>
       <style>{`@keyframes pulse {0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}`}</style>
+
+      <UserHeader />
 
       <div style={styles.card}>
         <h2 style={styles.title}>Enhanced Voice Control</h2>
@@ -591,7 +611,8 @@ const styles = {
     display: 'flex' as const,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: '2rem'
+    padding: '2rem',
+    paddingTop: '6rem'
   },
   card: {
     background: 'rgba(255,255,255,0.95)',
