@@ -1,4 +1,4 @@
-# enhanced_robot_movement.py - Fixed version with proper camera handling
+# enhanced_robot_movement.py - Complete fixed version
 import asyncio
 import re
 import threading
@@ -394,6 +394,10 @@ class EnhancedRobotState:
     
     # Interaction mode
     interaction_mode: str = "idle"  # idle, speech, text, keyboard, auto
+    
+    # Face recognition state
+    face_recognition_attempts: int = 0
+    awaiting_registration: bool = False
 
 class EnhancedRobotController:
     """Enhanced robot controller with face recognition and speech capabilities"""
@@ -580,7 +584,7 @@ class EnhancedRobotController:
             )
             self.status_thread.start()
             
-            # Unified vision processing (replaces separate vision and hand detection threads)
+            # Unified vision processing
             if self.state.camera_active:
                 self.vision_thread = threading.Thread(
                     target=self._unified_vision_loop,
@@ -594,10 +598,15 @@ class EnhancedRobotController:
             logger.error(f"Failed to start background tasks: {e}")
     
     def _unified_vision_loop(self):
-        """Unified vision processing loop for both face and hand detection"""
-        face_check_counter = 0
-        face_check_interval = 60  # Check faces every 60 frames (2 seconds at 30fps)
+        """Unified vision processing loop with improved face recognition logic"""
         last_user_check = time.time()
+        
+        # Face recognition state
+        recognition_attempts = 0
+        max_recognition_attempts = 3
+        unknown_user_detected = False
+        last_gesture = "none"
+        gesture_cooldown = time.time()
         
         while not self.shutdown_event.is_set():
             try:
@@ -609,10 +618,11 @@ class EnhancedRobotController:
                         continue
                     
                     frame = cv2.flip(frame, 1)
+                    current_time = time.time()
                     
-                    # Hand detection on every frame (high priority)
+                    # Hand detection with cooldown to prevent spam
                     if self.hand_detector:
-                        frame_copy = frame.copy()  # Work on copy for hand detection
+                        frame_copy = frame.copy()
                         self.hand_detector.find_hands(frame_copy, draw=False)
                         lm_list = self.hand_detector.find_position(frame_copy, draw=False)
                         
@@ -623,38 +633,54 @@ class EnhancedRobotController:
                             elif self.hand_detector.is_shaking_hands(lm_list):
                                 gesture = "shaking_hands"
                             
-                            with self.state_lock:
-                                if self.state.hand_gesture != gesture and gesture != "none":
+                            # Only update if gesture changed and cooldown expired
+                            if (gesture != "none" and 
+                                gesture != last_gesture and 
+                                current_time - gesture_cooldown > 2.0):  # 2 second cooldown
+                                
+                                with self.state_lock:
                                     self.state.hand_gesture = gesture
                                     self.state.last_speech_output = f"I see you're {gesture.replace('_', ' ')}!"
-                                    # Non-blocking speech
-                                    if self.config.enable_speech_synthesis and self.face_helper:
-                                        threading.Thread(
-                                            target=self.face_helper.speak, 
-                                            args=(f"I see you're {gesture.replace('_', ' ')}!",),
-                                            daemon=True
-                                        ).start()
-                                    logger.info(f"Hand gesture detected: {gesture}")
+                                    
+                                # Non-blocking speech
+                                if self.config.enable_speech_synthesis and self.face_helper:
+                                    threading.Thread(
+                                        target=self.face_helper.speak, 
+                                        args=(f"I see you're {gesture.replace('_', ' ')}!",),
+                                        daemon=True
+                                    ).start()
+                                
+                                logger.info(f"Hand gesture detected: {gesture}")
+                                last_gesture = gesture
+                                gesture_cooldown = current_time
                         else:
-                            # Reset gesture if no hands detected
-                            with self.state_lock:
-                                if self.state.hand_gesture != "none":
-                                    self.state.hand_gesture = "none"
+                            # Reset gesture if no hands detected for 1 second
+                            if current_time - gesture_cooldown > 1.0:
+                                with self.state_lock:
+                                    if self.state.hand_gesture != "none":
+                                        self.state.hand_gesture = "none"
+                                last_gesture = "none"
                     
-                    # Face recognition every 2 seconds and only if no active gestures
-                    current_time = time.time()
-                    if (current_time - last_user_check > 2.0 and 
+                    # Face recognition logic with attempts limit
+                    if (current_time - last_user_check > 3.0 and  # Every 3 seconds
                         self.face_helper and 
-                        self.state.hand_gesture == "none"):
+                        self.state.hand_gesture == "none" and  # Only when no gestures
+                        not unknown_user_detected and  # Don't keep trying if user is unknown
+                        not self.state.awaiting_registration):  # Don't try during registration
                         
                         last_user_check = current_time
                         try:
                             current_user = self.face_helper.find_match(frame, "auto")
+                            
                             if current_user and current_user != "Unknown":
+                                # User recognized successfully
                                 with self.state_lock:
                                     if self.state.current_user != current_user:
                                         self.state.current_user = current_user
                                         self.state.last_speech_output = f"Hello {current_user}!"
+                                        self.state.face_recognition_attempts = 0
+                                        self.state.awaiting_registration = False
+                                        
                                         # Non-blocking speech
                                         if self.config.enable_speech_synthesis:
                                             threading.Thread(
@@ -663,6 +689,29 @@ class EnhancedRobotController:
                                                 daemon=True
                                             ).start()
                                         logger.info(f"User recognized: {current_user}")
+                                
+                                # Reset recognition attempts
+                                recognition_attempts = 0
+                                unknown_user_detected = False
+                                
+                            else:
+                                # User not recognized
+                                recognition_attempts += 1
+                                with self.state_lock:
+                                    self.state.face_recognition_attempts = recognition_attempts
+                                
+                                logger.info(f"Face recognition attempt {recognition_attempts}/{max_recognition_attempts}")
+                                
+                                if recognition_attempts >= max_recognition_attempts:
+                                    # After 3 attempts, mark as unknown and stop trying
+                                    unknown_user_detected = True
+                                    with self.state_lock:
+                                        self.state.current_user = "Unknown"
+                                        self.state.awaiting_registration = True
+                                        self.state.last_speech_output = "I don't recognize you. Please register your face."
+                                    
+                                    logger.info("Unknown user detected after 3 attempts - prompting for registration")
+                                    
                         except Exception as e:
                             logger.error(f"Face recognition error: {e}")
                     
@@ -678,6 +727,14 @@ class EnhancedRobotController:
             except Exception as e:
                 logger.error(f"Unified vision processing error: {e}")
                 time.sleep(0.1)
+    
+    def reset_face_recognition_state(self):
+        """Reset face recognition state to allow new attempts"""
+        with self.state_lock:
+            self.state.face_recognition_attempts = 0
+            self.state.awaiting_registration = False
+            self.state.current_user = "Unknown"
+        logger.info("Face recognition state reset")
     
     def _obstacle_detection_loop(self):
         """Background obstacle detection loop"""
@@ -929,7 +986,9 @@ class EnhancedRobotController:
                 "interaction_mode": self.state.interaction_mode,
                 "face_recognition_available": FACE_RECOGNITION_AVAILABLE,
                 "speech_recognition_available": SPEECH_RECOGNITION_AVAILABLE,
-                "mediapipe_available": MEDIAPIPE_AVAILABLE
+                "mediapipe_available": MEDIAPIPE_AVAILABLE,
+                "face_recognition_attempts": self.state.face_recognition_attempts,
+                "awaiting_registration": self.state.awaiting_registration
             }
     
     def speak(self, text: str) -> bool:
@@ -1000,6 +1059,8 @@ class EnhancedRobotController:
             if user and user != "Unknown":
                 with self.state_lock:
                     self.state.current_user = user
+                    self.state.face_recognition_attempts = 0
+                    self.state.awaiting_registration = False
                 return user
             return None
         except Exception as e:
@@ -1018,6 +1079,8 @@ class EnhancedRobotController:
                 self.face_helper.initialize_face_recognition()
                 with self.state_lock:
                     self.state.current_user = name
+                    self.state.face_recognition_attempts = 0
+                    self.state.awaiting_registration = False
                 logger.info(f"New user registered: {name}")
                 return True
             return False
@@ -1309,6 +1372,14 @@ class EnhancedRobotController:
             cv2.putText(frame, f"Status: {self.state.status}", 
                        (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
+            # Show recognition attempts if scanning
+            if self.state.awaiting_registration:
+                cv2.putText(frame, "Ready for Registration", 
+                           (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
+            elif self.state.face_recognition_attempts > 0:
+                cv2.putText(frame, f"Scanning... ({self.state.face_recognition_attempts}/3)", 
+                           (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
+            
             # Encode frame as JPEG
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if ret:
@@ -1405,7 +1476,9 @@ def get_status() -> Dict:
             "gpio_available": False,
             "camera_active": False,
             "face_recognition_available": False,
-            "speech_recognition_available": False
+            "speech_recognition_available": False,
+            "face_recognition_attempts": 0,
+            "awaiting_registration": False
         }
 
 def move(direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
@@ -1462,6 +1535,15 @@ def set_interaction_mode(mode: str) -> bool:
         return get_enhanced_robot_controller().set_interaction_mode(mode)
     except Exception as e:
         logger.error(f"Error setting interaction mode: {e}")
+        return False
+
+def reset_face_recognition_state() -> bool:
+    """Reset face recognition state - called by FastAPI"""
+    try:
+        get_enhanced_robot_controller().reset_face_recognition_state()
+        return True
+    except Exception as e:
+        logger.error(f"Error resetting face recognition state: {e}")
         return False
 
 async def handle_conversation_mode(mode: str) -> str:
@@ -1521,17 +1603,20 @@ def shutdown_robot():
             _enhanced_robot_controller = None
 
 if __name__ == "__main__":
-    print("🤖 Enhanced Robot Movement Controller - Fixed Version")
-    print("=" * 60)
+    print("🤖 Enhanced Robot Movement Controller - Complete Fixed Version")
+    print("=" * 70)
     print("Features:")
-    print("• Fixed camera access and threading issues")
-    print("• Unified vision loop for face and hand detection") 
-    print("• Non-blocking speech synthesis")
-    print("• Improved camera initialization with fallbacks")
-    print("• Better error handling and logging")
-    print("• Enhanced obstacle detection")
-    print("• AI integration with speech responses")
-    print("• Camera streaming support")
-    print("• FastAPI integration ready")
-    print("=" * 60)
+    print("• ✅ Fixed camera access and threading issues")
+    print("• ✅ Unified vision loop for face and hand detection") 
+    print("• ✅ Non-blocking speech synthesis")
+    print("• ✅ Improved camera initialization with fallbacks")
+    print("• ✅ Better error handling and logging")
+    print("• ✅ Enhanced obstacle detection")
+    print("• ✅ AI integration with speech responses")
+    print("• ✅ Camera streaming support")
+    print("• ✅ Face recognition attempt limiting (3 tries)")
+    print("• ✅ Hand gesture spam prevention")
+    print("• ✅ Proper connection status handling")
+    print("• ✅ FastAPI integration ready")
+    print("=" * 70)
     print("✅ Enhanced robot controller module loaded successfully")

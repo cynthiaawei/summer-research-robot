@@ -6,6 +6,9 @@ interface FaceRecognitionStatus {
   camera_active: boolean;
   face_recognition_available: boolean;
   listening: boolean;
+  status: string;
+  face_recognition_attempts: number;
+  awaiting_registration: boolean;
 }
 
 type WSMessage =
@@ -13,23 +16,25 @@ type WSMessage =
   | { type: 'user_recognized'; data: { user: string | null; success: boolean } }
   | { type: 'user_registered'; data: { name: string; success: boolean } }
   | { type: 'speech_output'; data: { text: string; success: boolean } }
-  | { type: 'error'; data: { message: string } };
+  | { type: 'face_recognition_reset'; data: { success: boolean } }
+  | { type: 'error'; data: { message: string } }
+  | { type: 'pong' };
 
 const FaceRecognitionGate: React.FC = () => {
   const { setCurrentUser } = useUser();
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [status, setStatus] = useState<FaceRecognitionStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [recognitionStage, setRecognitionStage] = useState<'scanning' | 'unknown' | 'recognized' | 'registering'>('scanning');
+  const [recognitionStage, setRecognitionStage] = useState<'scanning' | 'unknown' | 'recognized'>('scanning');
   const [userName, setUserName] = useState('');
   const [registrationName, setRegistrationName] = useState('');
   const [message, setMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const cameraRef = useRef<HTMLImageElement>(null);
-  const recognitionIntervalRef = useRef<any>(null);
-  const scanAttemptsRef = useRef<number>(0);
   const mountedRef = useRef(true);
+  const connectionTimeoutRef = useRef<number | null>(null);
+  const pingIntervalRef = useRef<number | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -41,11 +46,32 @@ const FaceRecognitionGate: React.FC = () => {
   // Setup WebSocket connection
   useEffect(() => {
     let reconnectTimer: number;
+    let connectionAttempts = 0;
+    const maxConnectionAttempts = 5;
     
     const connect = () => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || connectionAttempts >= maxConnectionAttempts) return;
       
+      connectionAttempts++;
       setConnectionStatus('connecting');
+      setMessage(`Connecting to robot system... (${connectionAttempts}/${maxConnectionAttempts})`);
+      
+      // Clear any existing timeouts
+      if (connectionTimeoutRef.current) {
+        window.clearTimeout(connectionTimeoutRef.current);
+      }
+      if (pingIntervalRef.current) {
+        window.clearInterval(pingIntervalRef.current);
+      }
+      
+      // Set a timeout for connection
+      connectionTimeoutRef.current = window.setTimeout(() => {
+        if (connectionStatus === 'connecting') {
+          setConnectionStatus('disconnected');
+          setMessage('Connection timeout - retrying...');
+        }
+      }, 10000);
+      
       const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
       setWs(websocket);
 
@@ -53,8 +79,21 @@ const FaceRecognitionGate: React.FC = () => {
         if (!mountedRef.current) return;
         console.log('WebSocket connected');
         setConnectionStatus('connected');
-        setMessage('Connected to robot - initializing face recognition...');
-        startFaceRecognition();
+        setMessage('Connected to robot - scanning for faces...');
+        connectionAttempts = 0; // Reset on successful connection
+        
+        // Clear connection timeout
+        if (connectionTimeoutRef.current) {
+          window.clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+        
+        // Start ping to keep connection alive
+        pingIntervalRef.current = window.setInterval(() => {
+          if (websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 30000);
       };
 
       websocket.onmessage = (event) => {
@@ -66,52 +105,51 @@ const FaceRecognitionGate: React.FC = () => {
           switch (data.type) {
             case 'status_update':
               setStatus(data.data);
-              break;
-            case 'user_recognized':
-              if (data.data.success && data.data.user && data.data.user !== 'Unknown') {
-                setUserName(data.data.user);
+              
+              // Handle different recognition states based on backend status
+              if (data.data.awaiting_registration && recognitionStage !== 'unknown') {
+                setRecognitionStage('unknown');
+                setMessage('I don\'t recognize you. Please tell me your name.');
+              } else if (data.data.current_user !== 'Unknown' && 
+                        data.data.current_user !== '' && 
+                        recognitionStage !== 'recognized') {
+                setUserName(data.data.current_user);
                 setRecognitionStage('recognized');
-                setMessage(`Welcome back, ${data.data.user}!`);
-                sendWebSocketMessage('speech_command', { text: `Hello ${data.data.user}! Welcome back to the robot control system.` });
+                setMessage(`Welcome back, ${data.data.current_user}!`);
+                setCurrentUser(data.data.current_user);
                 
-                // Set user in context and navigate
-                setCurrentUser(data.data.user);
-                
-                // Clear interval when user is recognized
-                if (recognitionIntervalRef.current) {
-                  clearInterval(recognitionIntervalRef.current);
-                  recognitionIntervalRef.current = null;
-                }
                 setTimeout(() => {
                   if (mountedRef.current) {
                     window.location.href = '/menu';
                   }
                 }, 3000);
-              } else {
-                // Increment scan attempts and check if we should switch to unknown stage
-                scanAttemptsRef.current += 1;
-                if (scanAttemptsRef.current >= 5) {
-                  setRecognitionStage('unknown');
-                  setMessage('I don\'t recognize you. Please tell me your name.');
-                  sendWebSocketMessage('speech_command', { text: 'I don\'t recognize you. Please tell me your name.' });
-                  // Clear interval when switching to unknown stage
-                  if (recognitionIntervalRef.current) {
-                    clearInterval(recognitionIntervalRef.current);
-                    recognitionIntervalRef.current = null;
-                  }
-                } else {
-                  setMessage(`Scanning for faces... (${scanAttemptsRef.current}/5)`);
-                }
+              } else if (data.data.face_recognition_attempts > 0 && 
+                        data.data.face_recognition_attempts < 3 && 
+                        recognitionStage === 'scanning') {
+                setMessage(`Scanning for faces... (${data.data.face_recognition_attempts}/3)`);
               }
               break;
+              
+            case 'user_recognized':
+              if (data.data.success && data.data.user && data.data.user !== 'Unknown') {
+                setUserName(data.data.user);
+                setRecognitionStage('recognized');
+                setMessage(`Welcome back, ${data.data.user}!`);
+                setCurrentUser(data.data.user);
+                
+                setTimeout(() => {
+                  if (mountedRef.current) {
+                    window.location.href = '/menu';
+                  }
+                }, 3000);
+              }
+              break;
+              
             case 'user_registered':
               if (data.data.success) {
                 setUserName(data.data.name);
                 setRecognitionStage('recognized');
                 setMessage(`Nice to meet you, ${data.data.name}! Registration successful.`);
-                sendWebSocketMessage('speech_command', { text: `Nice to meet you ${data.data.name}! You are now registered. Welcome to the robot control system.` });
-                
-                // Set user in context and navigate
                 setCurrentUser(data.data.name);
                 
                 setTimeout(() => {
@@ -125,6 +163,19 @@ const FaceRecognitionGate: React.FC = () => {
               }
               setIsLoading(false);
               break;
+              
+            case 'face_recognition_reset':
+              if (data.data.success) {
+                setRecognitionStage('scanning');
+                setMessage('Scanning for faces...');
+              }
+              break;
+              
+            case 'pong':
+              // Ping response received, connection is alive
+              console.log('Ping response received');
+              break;
+              
             case 'error':
               setMessage(`Error: ${data.data.message}`);
               setIsLoading(false);
@@ -135,10 +186,10 @@ const FaceRecognitionGate: React.FC = () => {
         }
       };
 
-      websocket.onerror = () => {
-        console.error('WebSocket error');
+      websocket.onerror = (error) => {
+        console.error('WebSocket error:', error);
         setConnectionStatus('disconnected');
-        setMessage('Connection error - retrying...');
+        setMessage(`Connection error - attempt ${connectionAttempts}/${maxConnectionAttempts}`);
       };
 
       websocket.onclose = () => {
@@ -146,19 +197,24 @@ const FaceRecognitionGate: React.FC = () => {
         
         console.log('WebSocket closed');
         setConnectionStatus('disconnected');
-        setMessage('Disconnected - reconnecting...');
         setWs(null);
         
-        if (recognitionIntervalRef.current) {
-          clearInterval(recognitionIntervalRef.current);
-          recognitionIntervalRef.current = null;
+        // Clear ping interval
+        if (pingIntervalRef.current) {
+          window.clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
         }
         
-        reconnectTimer = window.setTimeout(() => {
-          if (mountedRef.current) {
-            connect();
-          }
-        }, 3000);
+        if (connectionAttempts < maxConnectionAttempts) {
+          setMessage(`Disconnected - reconnecting in 3 seconds... (${connectionAttempts}/${maxConnectionAttempts})`);
+          reconnectTimer = window.setTimeout(() => {
+            if (mountedRef.current) {
+              connect();
+            }
+          }, 3000);
+        } else {
+          setMessage('Failed to connect after multiple attempts. Please refresh the page.');
+        }
       };
     };
 
@@ -166,50 +222,50 @@ const FaceRecognitionGate: React.FC = () => {
 
     return () => {
       if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
+        window.clearTimeout(reconnectTimer);
       }
-      if (recognitionIntervalRef.current) {
-        clearInterval(recognitionIntervalRef.current);
+      if (connectionTimeoutRef.current) {
+        window.clearTimeout(connectionTimeoutRef.current);
+      }
+      if (pingIntervalRef.current) {
+        window.clearInterval(pingIntervalRef.current);
       }
       if (ws) {
         ws.close();
       }
     };
-  }, []); // Empty dependency array to avoid infinite loops
+  }, []); // Empty dependency array to prevent infinite loops
 
   // Camera stream setup
   useEffect(() => {
     if (cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
-      img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+      const cameraUrl = `http://${window.location.hostname}:8000/api/camera/stream?t=${Date.now()}`;
       
-      // Handle image load errors
-      img.onerror = () => {
-        console.warn('Camera stream not available');
+      img.onload = () => {
+        console.log('Camera stream loaded successfully');
       };
+      
+      img.onerror = () => {
+        console.warn('Camera stream not available, retrying...');
+        // Retry after 2 seconds
+        setTimeout(() => {
+          if (mountedRef.current && connectionStatus === 'connected') {
+            img.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${Date.now()}`;
+          }
+        }, 2000);
+      };
+      
+      img.src = cameraUrl;
     }
   }, [connectionStatus]);
 
   const sendWebSocketMessage = (type: string, data: any = {}) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type, data }));
+    } else {
+      setMessage('Not connected to robot system');
     }
-  };
-
-  const startFaceRecognition = () => {
-    setMessage('Scanning for faces...');
-    scanAttemptsRef.current = 0; // Reset scan attempts when starting
-    
-    // Clear any existing interval
-    if (recognitionIntervalRef.current) {
-      clearInterval(recognitionIntervalRef.current);
-    }
-    
-    recognitionIntervalRef.current = setInterval(() => {
-      if (mountedRef.current) {
-        sendWebSocketMessage('recognize_user', { mode: 'auto' });
-      }
-    }, 2000);
   };
 
   const handleTextRegistration = () => {
@@ -228,6 +284,19 @@ const FaceRecognitionGate: React.FC = () => {
   const proceedToControls = () => {
     setCurrentUser(userName);
     window.location.href = '/menu';
+  };
+
+  const retryRecognition = () => {
+    setRecognitionStage('scanning');
+    setMessage('Resetting face recognition...');
+    sendWebSocketMessage('reset_face_recognition');
+  };
+
+  const refreshConnection = () => {
+    if (ws) {
+      ws.close();
+    }
+    // The useEffect will handle reconnection
   };
 
   const styles = {
@@ -279,7 +348,8 @@ const FaceRecognitionGate: React.FC = () => {
       height: '12px',
       borderRadius: '50%',
       marginRight: '10px',
-      backgroundColor: connectionStatus === 'connected' ? '#48bb78' : '#e53e3e'
+      backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
+                     connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
     },
     cameraContainer: {
       marginBottom: '2rem'
@@ -339,6 +409,12 @@ const FaceRecognitionGate: React.FC = () => {
       background: 'transparent',
       color: '#718096',
       border: '2px solid #e2e8f0',
+      fontSize: '0.9rem',
+      padding: '0.75rem 1.5rem'
+    },
+    refreshBtn: {
+      background: 'linear-gradient(135deg, #ed8936, #dd6b20)',
+      color: 'white',
       fontSize: '0.9rem',
       padding: '0.75rem 1.5rem'
     },
@@ -432,6 +508,12 @@ const FaceRecognitionGate: React.FC = () => {
                 
                 <div style={styles.buttonRow}>
                   <button
+                    onClick={retryRecognition}
+                    style={{...styles.button, ...styles.secondaryBtn}}
+                  >
+                    Try Again
+                  </button>
+                  <button
                     onClick={skipToMenu}
                     style={{...styles.button, ...styles.skipBtn}}
                   >
@@ -479,6 +561,9 @@ const FaceRecognitionGate: React.FC = () => {
               }}>
                 <div><strong>Camera:</strong> {status.camera_active ? '✅ Active' : '❌ Inactive'}</div>
                 <div><strong>Face Recognition:</strong> {status.face_recognition_available ? '✅ Available' : '❌ Unavailable'}</div>
+                {status.face_recognition_attempts > 0 && (
+                  <div><strong>Recognition Attempts:</strong> {status.face_recognition_attempts}/3</div>
+                )}
                 {status.current_user && status.current_user !== 'Unknown' && (
                   <div><strong>Current User:</strong> {status.current_user}</div>
                 )}
@@ -488,12 +573,31 @@ const FaceRecognitionGate: React.FC = () => {
         )}
 
         {connectionStatus !== 'connected' && (
-          <div style={{
-            fontSize: '1.1rem',
-            color: '#718096',
-            marginBottom: '2rem'
-          }}>
-            Connecting to robot system...
+          <div>
+            <div style={{
+              fontSize: '1.1rem',
+              color: '#718096',
+              marginBottom: '2rem'
+            }}>
+              {connectionStatus === 'connecting' ? 'Connecting to robot system...' : 'Connection failed'}
+            </div>
+            
+            {connectionStatus === 'disconnected' && (
+              <div style={styles.buttonRow}>
+                <button
+                  onClick={refreshConnection}
+                  style={{...styles.button, ...styles.refreshBtn}}
+                >
+                  🔄 Retry Connection
+                </button>
+                <button
+                  onClick={skipToMenu}
+                  style={{...styles.button, ...styles.skipBtn}}
+                >
+                  Continue as Guest
+                </button>
+              </div>
+            )}
           </div>
         )}
 

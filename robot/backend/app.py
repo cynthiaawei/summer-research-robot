@@ -1,4 +1,4 @@
-# enhanced_app.py - Fixed FastAPI backend with proper camera handling
+# enhanced_app.py - Complete fixed FastAPI backend
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -84,6 +84,8 @@ class EnhancedRobotStatusResponse(BaseModel):
     face_recognition_available: bool
     speech_recognition_available: bool
     mediapipe_available: bool
+    face_recognition_attempts: int
+    awaiting_registration: bool
 
 # Global state
 robot_movement_available = ROBOT_AVAILABLE
@@ -105,15 +107,18 @@ if ROBOT_AVAILABLE:
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
+        self.connection_lock = asyncio.Lock()
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        async with self.connection_lock:
+            self.active_connections.append(websocket)
         logger.info(f"Client connected. Total connections: {len(self.active_connections)}")
 
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+    async def disconnect(self, websocket: WebSocket):
+        async with self.connection_lock:
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
         logger.info(f"Client disconnected. Total connections: {len(self.active_connections)}")
 
     async def send_personal_message(self, message: str, websocket: WebSocket):
@@ -127,64 +132,51 @@ class ConnectionManager:
             return
             
         disconnected = []
-        for connection in self.active_connections:
+        async with self.connection_lock:
+            connections_copy = self.active_connections.copy()
+        
+        for connection in connections_copy:
             try:
                 await connection.send_text(message)
             except Exception as e:
                 logger.error(f"Error broadcasting message: {e}")
                 disconnected.append(connection)
         
-        for connection in disconnected:
-            self.disconnect(connection)
+        # Remove disconnected connections
+        if disconnected:
+            async with self.connection_lock:
+                for connection in disconnected:
+                    if connection in self.active_connections:
+                        self.active_connections.remove(connection)
 
 manager = ConnectionManager()
 
 # Status update broadcaster
 async def broadcast_status():
     """Broadcast enhanced robot status to all connected clients"""
+    last_status = None
+    
     while True:
         try:
             if len(manager.active_connections) > 0:
                 if robot_movement_available:
                     try:
                         status = robot_movement.get_status()
-                        await manager.broadcast(json.dumps({
-                            "type": "status_update",
-                            "data": status
-                        }))
+                        
+                        # Only broadcast if status changed to reduce network traffic
+                        if status != last_status:
+                            await manager.broadcast(json.dumps({
+                                "type": "status_update",
+                                "data": status
+                            }))
+                            last_status = status.copy()
+                            
                     except Exception as e:
                         logger.error(f"Error getting robot status: {e}")
                         # Send error status if robot fails
-                        await manager.broadcast(json.dumps({
-                            "type": "status_update",
-                            "data": {
-                                "status": "error",
-                                "message": f"Robot status error: {str(e)}",
-                                "obstacle_detected": False,
-                                "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
-                                "last_distances": [],
-                                "last_command": "",
-                                "uptime": 0.0,
-                                "gpio_available": False,
-                                "current_user": "Unknown",
-                                "faces_detected": [],
-                                "hand_gesture": "none",
-                                "camera_active": False,
-                                "last_speech_output": "",
-                                "listening": False,
-                                "speech_recognition_active": False,
-                                "interaction_mode": "idle",
-                                "face_recognition_available": False,
-                                "speech_recognition_available": False,
-                                "mediapipe_available": False
-                            }
-                        }))
-                else:
-                    await manager.broadcast(json.dumps({
-                        "type": "status_update",
-                        "data": {
-                            "status": "disconnected",
-                            "message": "Enhanced robot movement module not available",
+                        error_status = {
+                            "status": "error",
+                            "message": f"Robot status error: {str(e)}",
                             "obstacle_detected": False,
                             "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
                             "last_distances": [],
@@ -201,10 +193,50 @@ async def broadcast_status():
                             "interaction_mode": "idle",
                             "face_recognition_available": False,
                             "speech_recognition_available": False,
-                            "mediapipe_available": False
+                            "mediapipe_available": False,
+                            "face_recognition_attempts": 0,
+                            "awaiting_registration": False
                         }
-                    }))
-            await asyncio.sleep(0.5)
+                        
+                        if error_status != last_status:
+                            await manager.broadcast(json.dumps({
+                                "type": "status_update",
+                                "data": error_status
+                            }))
+                            last_status = error_status
+                else:
+                    offline_status = {
+                        "status": "disconnected",
+                        "message": "Enhanced robot movement module not available",
+                        "obstacle_detected": False,
+                        "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
+                        "last_distances": [],
+                        "last_command": "",
+                        "uptime": 0.0,
+                        "gpio_available": False,
+                        "current_user": "Unknown",
+                        "faces_detected": [],
+                        "hand_gesture": "none",
+                        "camera_active": False,
+                        "last_speech_output": "",
+                        "listening": False,
+                        "speech_recognition_active": False,
+                        "interaction_mode": "idle",
+                        "face_recognition_available": False,
+                        "speech_recognition_available": False,
+                        "mediapipe_available": False,
+                        "face_recognition_attempts": 0,
+                        "awaiting_registration": False
+                    }
+                    
+                    if offline_status != last_status:
+                        await manager.broadcast(json.dumps({
+                            "type": "status_update",
+                            "data": offline_status
+                        }))
+                        last_status = offline_status
+            
+            await asyncio.sleep(0.5)  # Broadcast every 500ms
         except Exception as e:
             logger.error(f"Error in status broadcaster: {e}")
             await asyncio.sleep(1)
@@ -389,6 +421,25 @@ async def register_user(user_registration: UserRegistration):
         logger.error(f"Error registering user: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/reset-face-recognition")
+async def reset_face_recognition():
+    """Reset face recognition state to allow new attempts"""
+    if not robot_movement_available:
+        raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
+    
+    try:
+        success = robot_movement.reset_face_recognition_state()
+        
+        await manager.broadcast(json.dumps({
+            "type": "face_recognition_reset",
+            "data": {"success": success}
+        }))
+        
+        return {"success": success, "message": "Face recognition state reset"}
+    except Exception as e:
+        logger.error(f"Error resetting face recognition: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/interaction-mode")
 async def set_interaction_mode(interaction_mode: InteractionMode):
     """Set robot interaction mode"""
@@ -440,6 +491,8 @@ async def camera_stream():
         """Generate camera frames with better error handling"""
         frame_count = 0
         last_frame_time = time.time()
+        max_failures = 10
+        failure_count = 0
         
         while True:
             try:
@@ -449,15 +502,21 @@ async def camera_stream():
                 if frame_bytes:
                     frame_count += 1
                     last_frame_time = current_time
+                    failure_count = 0  # Reset failure count on success
+                    
                     yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                           b'Content-Type: image/jpeg\r\n'
+                           b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' + 
+                           frame_bytes + b'\r\n')
                     
                     # Limit frame rate to ~15 FPS to reduce load
-                    time.sleep(0.067)  
+                    time.sleep(0.067)
                 else:
-                    # If no frame for 5 seconds, break the stream
-                    if current_time - last_frame_time > 5.0:
-                        logger.warning("No camera frames for 5 seconds, ending stream")
+                    failure_count += 1
+                    
+                    # If no frame for 5 seconds or too many failures, break the stream
+                    if (current_time - last_frame_time > 5.0) or (failure_count > max_failures):
+                        logger.warning(f"Camera stream ending: no frames for {current_time - last_frame_time:.1f}s or {failure_count} failures")
                         break
                     
                     # Send a small delay and try again
@@ -465,7 +524,10 @@ async def camera_stream():
                     
             except Exception as e:
                 logger.error(f"Camera streaming error: {e}")
-                break
+                failure_count += 1
+                if failure_count > max_failures:
+                    break
+                time.sleep(0.1)
     
     try:
         return StreamingResponse(
@@ -474,7 +536,8 @@ async def camera_stream():
             headers={
                 "Cache-Control": "no-cache, no-store, must-revalidate",
                 "Pragma": "no-cache",
-                "Expires": "0"
+                "Expires": "0",
+                "Access-Control-Allow-Origin": "*"
             }
         )
     except Exception as e:
@@ -635,6 +698,13 @@ async def websocket_endpoint(websocket: WebSocket):
                             "data": {"message": "No name specified"}
                         }))
                 
+                elif message_type == "reset_face_recognition":
+                    success = robot_movement.reset_face_recognition_state()
+                    await manager.broadcast(json.dumps({
+                        "type": "face_recognition_reset",
+                        "data": {"success": success}
+                    }))
+                
                 elif message_type == "set_interaction_mode":
                     mode = payload.get("mode", "")
                     if mode:
@@ -694,11 +764,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 }))
     
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        await manager.disconnect(websocket)
         logger.info("Client disconnected from WebSocket")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
-        manager.disconnect(websocket)
+        await manager.disconnect(websocket)
 
 # Health check endpoint with better error handling
 @app.get("/api/health")
@@ -728,7 +798,10 @@ async def health_check():
                 "speech_recognition": status.get("speech_recognition_available", False),
                 "hand_detection": status.get("mediapipe_available", False),
                 "camera": status.get("camera_active", False)
-            }
+            },
+            "face_recognition_attempts": status.get("face_recognition_attempts", 0),
+            "awaiting_registration": status.get("awaiting_registration", False),
+            "current_user": status.get("current_user", "Unknown")
         }
     except Exception as e:
         logger.error(f"Health check error: {e}")
@@ -768,11 +841,15 @@ if __name__ == "__main__":
     print("📡 Server will be available at: http://localhost:8000")
     print("🤖 Enhanced robot control interface ready!")
     print("✨ New Features:")
-    print("   • Face Recognition & User Management")
-    print("   • Speech Synthesis & Recognition") 
-    print("   • Hand Gesture Detection")
-    print("   • Camera Streaming")
-    print("   • Enhanced AI Conversations")
+    print("   • ✅ Face Recognition & User Management")
+    print("   • ✅ Speech Synthesis & Recognition") 
+    print("   • ✅ Hand Gesture Detection")
+    print("   • ✅ Camera Streaming")
+    print("   • ✅ Enhanced AI Conversations")
+    print("   • ✅ Fixed threading and camera issues")
+    print("   • ✅ Gesture spam prevention")
+    print("   • ✅ 3-attempt face recognition")
+    print("   • ✅ Improved connection handling")
     print(f"🔧 Enhanced robot movement module: {'Available' if robot_movement_available else 'Not Available (Simulation Mode)'}")
     
     uvicorn.run(
