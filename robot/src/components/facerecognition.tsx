@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from './UserContext';
 
@@ -26,7 +26,6 @@ const FaceRecognitionGate: React.FC = () => {
   const navigate = useNavigate();
   
   // Core state
-  const [ws, setWs] = useState<WebSocket | null>(null);
   const [status, setStatus] = useState<FaceRecognitionStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [recognitionStage, setRecognitionStage] = useState<'scanning' | 'unknown' | 'recognized'>('scanning');
@@ -35,17 +34,130 @@ const FaceRecognitionGate: React.FC = () => {
   const [message, setMessage] = useState('Initializing...');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Refs for cleanup and camera
-  const cameraRef = useRef<HTMLImageElement>(null);
+  // Refs for stable references
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
-  const pingIntervalRef = useRef<number | null>(null);
-  const navigationTimeoutRef = useRef<number | null>(null);
+  const cameraRef = useRef<HTMLImageElement>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const navigationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const mountedRef = useRef(true);
+  const connectionAttemptsRef = useRef(0);
+
+  // Navigation helper with useCallback to prevent recreating
+  const navigateToMenu = useCallback((user: string) => {
+    console.log(`🚀 Navigating to menu for user: ${user}`);
+    setCurrentUser(user);
+    
+    if (navigationTimeoutRef.current) {
+      clearTimeout(navigationTimeoutRef.current);
+    }
+    
+    navigationTimeoutRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        console.log('✅ Executing navigation to /menu');
+        navigate('/menu');
+      }
+    }, 1500);
+  }, [setCurrentUser, navigate]);
+
+  // WebSocket message handler with useCallback
+  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+    if (!mountedRef.current) return;
+    
+    try {
+      const data: WSMessage = JSON.parse(event.data);
+      console.log('📥 Received WebSocket message:', data.type, data);
+      
+      switch (data.type) {
+        case 'status_update':
+          setStatus(data.data);
+          
+          // Handle state transitions based on backend status
+          if (data.data.awaiting_registration && recognitionStage !== 'unknown') {
+            console.log('🔄 Backend says awaiting registration - switching to unknown stage');
+            setRecognitionStage('unknown');
+            setMessage('I don\'t recognize you. Please enter your name to register.');
+          } else if (data.data.current_user && 
+                    data.data.current_user !== 'Unknown' && 
+                    data.data.current_user !== '' && 
+                    !data.data.awaiting_registration &&
+                    recognitionStage !== 'recognized') {
+            console.log(`👤 Backend recognized user: ${data.data.current_user}`);
+            setUserName(data.data.current_user);
+            setRecognitionStage('recognized');
+            setMessage(`Welcome back, ${data.data.current_user}! Redirecting to controls...`);
+            navigateToMenu(data.data.current_user);
+          } else if (data.data.face_recognition_attempts > 0 && 
+                    data.data.face_recognition_attempts < 3 && 
+                    recognitionStage === 'scanning' &&
+                    !data.data.awaiting_registration) {
+            setMessage(`Scanning for faces... (${data.data.face_recognition_attempts}/3)`);
+          }
+          break;
+          
+        case 'user_recognized':
+          console.log('👤 User recognized event:', data.data);
+          if (data.data.success && data.data.user && data.data.user !== 'Unknown') {
+            setUserName(data.data.user);
+            setRecognitionStage('recognized');
+            setMessage(`Welcome back, ${data.data.user}! Redirecting to controls...`);
+            navigateToMenu(data.data.user);
+          }
+          break;
+          
+        case 'user_registered':
+          console.log('📝 User registration event:', data.data);
+          setIsLoading(false);
+          if (data.data.success) {
+            setUserName(data.data.name);
+            setRecognitionStage('recognized');
+            setMessage(`Nice to meet you, ${data.data.name}! Registration successful. Redirecting...`);
+            navigateToMenu(data.data.name);
+          } else {
+            setMessage('Registration failed. Please try again.');
+            setRecognitionStage('unknown');
+          }
+          break;
+          
+        case 'face_recognition_reset':
+          console.log('🔄 Face recognition reset event:', data.data);
+          if (data.data.success) {
+            setRecognitionStage('scanning');
+            setMessage('Scanning for faces...');
+          }
+          break;
+          
+        case 'pong':
+          console.log('🏓 Ping response received');
+          break;
+          
+        case 'error':
+          console.error('❌ WebSocket error message:', data.data.message);
+          setMessage(`Error: ${data.data.message}`);
+          setIsLoading(false);
+          break;
+      }
+    } catch (error) {
+      console.error('❌ WebSocket message parse error:', error);
+    }
+  }, [recognitionStage, navigateToMenu]);
+
+  // WebSocket message sender with useCallback
+  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      console.log('📤 Sending WebSocket message:', type, data);
+      wsRef.current.send(JSON.stringify({ type, data }));
+      return true;
+    } else {
+      console.warn('⚠️ WebSocket not connected, cannot send message');
+      setMessage('Not connected to robot system');
+      return false;
+    }
+  }, []);
 
   // Cleanup function
-  const cleanup = () => {
-    console.log('🧹 Cleaning up face recognition component');
+  const cleanup = useCallback(() => {
+    console.log('🧹 Cleaning up WebSocket and timers');
     
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -62,213 +174,129 @@ const FaceRecognitionGate: React.FC = () => {
       navigationTimeoutRef.current = null;
     }
     
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.close();
+    if (wsRef.current) {
+      const ws = wsRef.current;
       wsRef.current = null;
-    }
-  };
-
-  // Navigation helper
-  const navigateToMenu = (user: string) => {
-    console.log(`🚀 Navigating to menu for user: ${user}`);
-    setCurrentUser(user);
-    
-    // Clear any existing navigation timeout
-    if (navigationTimeoutRef.current) {
-      clearTimeout(navigationTimeoutRef.current);
-    }
-    
-    navigationTimeoutRef.current = window.setTimeout(() => {
-      if (mountedRef.current) {
-        console.log('✅ Executing navigation to /menu');
-        navigate('/menu');
+      
+      // Remove event listeners before closing
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
       }
-    }, 1500);
-  };
-
-  // WebSocket message sender
-  const sendWebSocketMessage = (type: string, data: any = {}) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      console.log('📤 Sending WebSocket message:', type, data);
-      wsRef.current.send(JSON.stringify({ type, data }));
-      return true;
-    } else {
-      console.warn('⚠️ WebSocket not connected, cannot send message');
-      setMessage('Not connected to robot system');
-      return false;
     }
-  };
+  }, []);
 
-  // WebSocket connection setup
-  useEffect(() => {
-    let connectionAttempts = 0;
-    const maxAttempts = 3;
+  // WebSocket connection function
+  const connectWebSocket = useCallback(() => {
+    if (!mountedRef.current) {
+      console.log('❌ Component unmounted, not connecting');
+      return;
+    }
     
-    const connectWebSocket = () => {
-      if (!mountedRef.current || connectionAttempts >= maxAttempts) {
-        console.log('❌ Max connection attempts reached or component unmounted');
-        return;
-      }
+    const maxAttempts = 5;
+    connectionAttemptsRef.current++;
+    
+    if (connectionAttemptsRef.current > maxAttempts) {
+      console.log('❌ Max connection attempts reached');
+      setConnectionStatus('disconnected');
+      setMessage('Failed to connect after multiple attempts. Please refresh the page.');
+      return;
+    }
+    
+    console.log(`🔌 Attempting WebSocket connection (${connectionAttemptsRef.current}/${maxAttempts})`);
+    setConnectionStatus('connecting');
+    setMessage(`Connecting to robot system... (${connectionAttemptsRef.current}/${maxAttempts})`);
+    
+    try {
+      // Clean up any existing connection
+      cleanup();
       
-      connectionAttempts++;
-      console.log(`🔌 Attempting WebSocket connection (${connectionAttempts}/${maxAttempts})`);
-      
-      setConnectionStatus('connecting');
-      setMessage(`Connecting to robot system... (${connectionAttempts}/${maxAttempts})`);
-      
-      try {
-        const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-        wsRef.current = websocket;
-        setWs(websocket);
+      const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = websocket;
 
-        websocket.onopen = () => {
-          if (!mountedRef.current) {
-            console.log('⚠️ Component unmounted during connection');
-            websocket.close();
-            return;
-          }
-          
-          console.log('✅ WebSocket connected successfully');
-          setConnectionStatus('connected');
-          setMessage('Connected to robot - scanning for faces...');
-          connectionAttempts = 0; // Reset on success
-          
-          // Start keepalive ping
-          pingIntervalRef.current = window.setInterval(() => {
-            if (websocket.readyState === WebSocket.OPEN) {
-              websocket.send(JSON.stringify({ type: 'ping' }));
-            }
-          }, 30000);
-        };
-
-        websocket.onmessage = (event) => {
-          if (!mountedRef.current) return;
-          
-          try {
-            const data: WSMessage = JSON.parse(event.data);
-            console.log('📥 Received WebSocket message:', data.type, data);
-            
-            switch (data.type) {
-              case 'status_update':
-                setStatus(data.data);
-                
-                // Handle state transitions based on backend status
-                if (data.data.awaiting_registration && recognitionStage !== 'unknown') {
-                  console.log('🔄 Backend says awaiting registration - switching to unknown stage');
-                  setRecognitionStage('unknown');
-                  setMessage('I don\'t recognize you. Please enter your name to register.');
-                } else if (data.data.current_user && 
-                          data.data.current_user !== 'Unknown' && 
-                          data.data.current_user !== '' && 
-                          !data.data.awaiting_registration &&
-                          recognitionStage !== 'recognized') {
-                  console.log(`👤 Backend recognized user: ${data.data.current_user}`);
-                  setUserName(data.data.current_user);
-                  setRecognitionStage('recognized');
-                  setMessage(`Welcome back, ${data.data.current_user}! Redirecting to controls...`);
-                  navigateToMenu(data.data.current_user);
-                } else if (data.data.face_recognition_attempts > 0 && 
-                          data.data.face_recognition_attempts < 3 && 
-                          recognitionStage === 'scanning' &&
-                          !data.data.awaiting_registration) {
-                  setMessage(`Scanning for faces... (${data.data.face_recognition_attempts}/3)`);
-                }
-                break;
-                
-              case 'user_recognized':
-                console.log('👤 User recognized event:', data.data);
-                if (data.data.success && data.data.user && data.data.user !== 'Unknown') {
-                  setUserName(data.data.user);
-                  setRecognitionStage('recognized');
-                  setMessage(`Welcome back, ${data.data.user}! Redirecting to controls...`);
-                  navigateToMenu(data.data.user);
-                }
-                break;
-                
-              case 'user_registered':
-                console.log('📝 User registration event:', data.data);
-                setIsLoading(false);
-                if (data.data.success) {
-                  setUserName(data.data.name);
-                  setRecognitionStage('recognized');
-                  setMessage(`Nice to meet you, ${data.data.name}! Registration successful. Redirecting...`);
-                  navigateToMenu(data.data.name);
-                } else {
-                  setMessage('Registration failed. Please try again.');
-                  setRecognitionStage('unknown');
-                }
-                break;
-                
-              case 'face_recognition_reset':
-                console.log('🔄 Face recognition reset event:', data.data);
-                if (data.data.success) {
-                  setRecognitionStage('scanning');
-                  setMessage('Scanning for faces...');
-                }
-                break;
-                
-              case 'pong':
-                console.log('🏓 Ping response received');
-                break;
-                
-              case 'error':
-                console.error('❌ WebSocket error message:', data.data.message);
-                setMessage(`Error: ${data.data.message}`);
-                setIsLoading(false);
-                break;
-            }
-          } catch (error) {
-            console.error('❌ WebSocket message parse error:', error);
-          }
-        };
-
-        websocket.onerror = (error) => {
-          console.error('❌ WebSocket error:', error);
-          setConnectionStatus('disconnected');
-          setMessage(`Connection error - attempt ${connectionAttempts}/${maxAttempts}`);
-        };
-
-        websocket.onclose = (event) => {
-          console.log('🔌 WebSocket closed. Code:', event.code, 'Reason:', event.reason);
-          
-          if (!mountedRef.current) {
-            console.log('✅ Component unmounted, not reconnecting');
-            return;
-          }
-          
-          setConnectionStatus('disconnected');
-          setWs(null);
-          wsRef.current = null;
-          
-          // Clear ping interval
-          if (pingIntervalRef.current) {
-            clearInterval(pingIntervalRef.current);
-            pingIntervalRef.current = null;
-          }
-          
-          if (connectionAttempts < maxAttempts) {
-            setMessage(`Disconnected - reconnecting in 3 seconds... (${connectionAttempts}/${maxAttempts})`);
-            reconnectTimeoutRef.current = window.setTimeout(() => {
-              if (mountedRef.current) {
-                connectWebSocket();
-              }
-            }, 3000);
-          } else {
-            setMessage('Failed to connect after multiple attempts. Please refresh the page.');
-          }
-        };
+      websocket.onopen = (event) => {
+        if (!mountedRef.current) {
+          console.log('⚠️ Component unmounted during connection');
+          websocket.close();
+          return;
+        }
         
-      } catch (error) {
-        console.error('❌ WebSocket creation error:', error);
+        console.log('✅ WebSocket connected successfully', event);
+        setConnectionStatus('connected');
+        setMessage('Connected to robot - scanning for faces...');
+        connectionAttemptsRef.current = 0; // Reset on success
+        
+        // Start keepalive ping every 30 seconds
+        pingIntervalRef.current = setInterval(() => {
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'ping' }));
+            console.log('🏓 Sent ping');
+          }
+        }, 30000);
+      };
+
+      websocket.onmessage = handleWebSocketMessage;
+
+      websocket.onerror = (error) => {
+        console.error('❌ WebSocket error:', error);
         setConnectionStatus('disconnected');
-        setMessage('Failed to create WebSocket connection');
-      }
-    };
+        setMessage(`Connection error - attempt ${connectionAttemptsRef.current}/${maxAttempts}`);
+      };
 
+      websocket.onclose = (event) => {
+        console.log('🔌 WebSocket closed. Code:', event.code, 'Reason:', event.reason, 'WasClean:', event.wasClean);
+        
+        if (!mountedRef.current) {
+          console.log('✅ Component unmounted, not reconnecting');
+          return;
+        }
+        
+        setConnectionStatus('disconnected');
+        wsRef.current = null;
+        
+        // Clear ping interval
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
+        }
+        
+        // Only reconnect if we haven't exceeded max attempts
+        if (connectionAttemptsRef.current < maxAttempts) {
+          console.log(`📡 Scheduling reconnection in 3 seconds... (attempt ${connectionAttemptsRef.current + 1}/${maxAttempts})`);
+          setMessage(`Disconnected - reconnecting in 3 seconds... (${connectionAttemptsRef.current}/${maxAttempts})`);
+          
+          reconnectTimeoutRef.current = setTimeout(() => {
+            if (mountedRef.current) {
+              connectWebSocket();
+            }
+          }, 3000);
+        } else {
+          setMessage('Failed to connect after multiple attempts. Please refresh the page.');
+        }
+      };
+      
+    } catch (error) {
+      console.error('❌ WebSocket creation error:', error);
+      setConnectionStatus('disconnected');
+      setMessage('Failed to create WebSocket connection');
+    }
+  }, [handleWebSocketMessage, cleanup]);
+
+  // Main WebSocket effect
+  useEffect(() => {
+    console.log('🚀 Starting WebSocket connection');
     connectWebSocket();
-
-    return cleanup;
-  }, []); // Only run once on mount
+    
+    return () => {
+      console.log('🧹 Component unmounting - cleaning up');
+      mountedRef.current = false;
+      cleanup();
+    };
+  }, [connectWebSocket, cleanup]);
 
   // Camera stream setup
   useEffect(() => {
@@ -283,8 +311,8 @@ const FaceRecognitionGate: React.FC = () => {
       img.onerror = () => {
         console.warn('⚠️ Camera stream not available, retrying...');
         setTimeout(() => {
-          if (mountedRef.current && connectionStatus === 'connected') {
-            img.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${Date.now()}`;
+          if (mountedRef.current && connectionStatus === 'connected' && cameraRef.current) {
+            cameraRef.current.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${Date.now()}`;
           }
         }, 2000);
       };
@@ -292,15 +320,6 @@ const FaceRecognitionGate: React.FC = () => {
       img.src = cameraUrl;
     }
   }, [connectionStatus]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      console.log('🧹 Component unmounting');
-      mountedRef.current = false;
-      cleanup();
-    };
-  }, []);
 
   // Event handlers
   const handleTextRegistration = () => {
@@ -331,8 +350,9 @@ const FaceRecognitionGate: React.FC = () => {
 
   const refreshConnection = () => {
     console.log('🔄 Refreshing WebSocket connection');
+    connectionAttemptsRef.current = 0; // Reset attempts
     cleanup();
-    window.location.reload(); // Simple but effective
+    connectWebSocket();
   };
 
   const styles = {
@@ -618,11 +638,12 @@ const FaceRecognitionGate: React.FC = () => {
             {/* Debug Information */}
             <div style={styles.debugInfo}>
               <div><strong>🐛 Debug Info:</strong></div>
-              <div>Frontend Stage: {recognitionStage}</div>
-              <div>Backend Awaiting Reg: {status?.awaiting_registration ? 'Yes' : 'No'}</div>
-              <div>Backend User: {status?.current_user || 'None'}</div>
-              <div>Backend Attempts: {status?.face_recognition_attempts || 0}/3</div>
-              <div>WebSocket State: {ws?.readyState === WebSocket.OPEN ? 'Open' : 'Closed'}</div>
+              <div>Frontend Stage: <strong>{recognitionStage}</strong></div>
+              <div>Backend Awaiting Reg: <strong>{status?.awaiting_registration ? 'Yes' : 'No'}</strong></div>
+              <div>Backend User: <strong>{status?.current_user || 'None'}</strong></div>
+              <div>Backend Attempts: <strong>{status?.face_recognition_attempts || 0}/3</strong></div>
+              <div>WebSocket State: <strong>{wsRef.current?.readyState === WebSocket.OPEN ? 'Open' : 'Closed'}</strong></div>
+              <div>Connection Attempts: <strong>{connectionAttemptsRef.current}</strong></div>
             </div>
           </>
         )}
