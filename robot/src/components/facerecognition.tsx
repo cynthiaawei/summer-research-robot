@@ -25,7 +25,6 @@ const FaceRecognitionGate: React.FC = () => {
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [response, setResponse] = useState<string>('');
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 5;
 
@@ -46,15 +45,13 @@ const FaceRecognitionGate: React.FC = () => {
     const connect = () => {
       if (!mountedRef.current) return;
       
-      setConnectionStatus('connecting');
       const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
       setWs(websocket);
 
       websocket.onopen = () => {
         if (!mountedRef.current) return;
         console.log('WebSocket connected');
-        setConnectionStatus('connected');
-        setResponse('Connected - scanning for faces...');
+        setResponse('Scanning for faces...');
         setRetryCount(0);
       };
 
@@ -120,7 +117,6 @@ const FaceRecognitionGate: React.FC = () => {
 
       websocket.onerror = () => {
         console.error('WebSocket error');
-        setConnectionStatus('disconnected');
         setResponse('Connection error');
       };
 
@@ -128,7 +124,6 @@ const FaceRecognitionGate: React.FC = () => {
         if (!mountedRef.current) return;
         
         console.log('WebSocket closed');
-        setConnectionStatus('disconnected');
         setResponse('Disconnected - reconnecting...');
         setWs(null);
         
@@ -158,11 +153,11 @@ const FaceRecognitionGate: React.FC = () => {
 
   // Camera setup
   useEffect(() => {
-    if (cameraRef.current && connectionStatus === 'connected') {
+    if (cameraRef.current) {
       const img = cameraRef.current;
       img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
     }
-  }, [connectionStatus]);
+  }, []);
 
   const sendWebSocketMessage = (type: string, data: any = {}) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -185,69 +180,37 @@ const FaceRecognitionGate: React.FC = () => {
         <h1 style={styles.title}>🤖 Robot Access Control</h1>
         <p style={styles.subtitle}>Face recognition security system</p>
         
-        <div style={styles.connectionIndicator}>
-          <div style={{
-            ...styles.statusDot,
-            backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
-                            connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
-          }}></div>
-          <span>
-            {connectionStatus === 'connected' ? 'Connected & Ready' : 
-             connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
-          </span>
+        <div style={styles.cameraContainer}>
+          <img
+            ref={cameraRef}
+            alt="Robot Camera Feed"
+            style={styles.cameraFeed}
+          />
         </div>
 
-        {connectionStatus === 'connected' && (
-          <>
-            <div style={styles.cameraContainer}>
-              <img
-                ref={cameraRef}
-                alt="Robot Camera Feed"
-                style={styles.cameraFeed}
-              />
-            </div>
+        <div style={styles.message}>
+          {response}
+        </div>
 
-            <div style={styles.message}>
-              {response}
-            </div>
+        <div style={styles.infoBox}>
+          👁️ <strong>Face Recognition Active</strong><br />
+          Please look at the camera for identification
+        </div>
+        
+        <div style={styles.buttonRow}>
+          <button onClick={resetRecognition} style={styles.secondaryBtn}>
+            🔄 Reset & Try Again
+          </button>
+        </div>
 
-            <div style={styles.infoBox}>
-              👁️ <strong>Face Recognition Active</strong><br />
-              Please look at the camera for identification
-            </div>
-            
-            <div style={styles.buttonRow}>
-              <button onClick={resetRecognition} style={styles.secondaryBtn}>
-                🔄 Reset & Try Again
-              </button>
-            </div>
-
-            {/* Debug Info */}
-            {status && (
-              <div style={styles.debugBox}>
-                <strong>Debug Info:</strong><br />
-                Backend User: {status.current_user}<br />
-                Backend Attempts: {status.face_recognition_attempts}/3<br />
-                Awaiting Registration: {status.awaiting_registration ? 'Yes' : 'No'}<br />
-                Camera: {status.camera_active ? 'Active' : 'Inactive'}
-              </div>
-            )}
-          </>
-        )}
-
-        {connectionStatus !== 'connected' && (
-          <div>
-            <div style={styles.disconnectedMessage}>
-              {connectionStatus === 'connecting' ? 'Connecting to robot...' : 'Connection failed'}
-            </div>
-            
-            {connectionStatus === 'disconnected' && (
-              <div style={styles.buttonRow}>
-                <button onClick={() => setRetryCount(0)} style={styles.refreshBtn}>
-                  🔄 Retry Connection
-                </button>
-              </div>
-            )}
+        {/* Debug Info */}
+        {status && (
+          <div style={styles.debugBox}>
+            <strong>Debug Info:</strong><br />
+            Backend User: {status.current_user}<br />
+            Backend Attempts: {status.face_recognition_attempts}/3<br />
+            Awaiting Registration: {status.awaiting_registration ? 'Yes' : 'No'}<br />
+            Camera: {status.camera_active ? 'Active' : 'Inactive'}
           </div>
         )}
       </div>
@@ -291,19 +254,6 @@ const styles = {
     color: '#718096',
     marginBottom: '2rem',
     fontSize: '1.2rem'
-  },
-  connectionIndicator: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: '2rem',
-    fontSize: '1rem'
-  },
-  statusDot: {
-    width: '12px',
-    height: '12px',
-    borderRadius: '50%',
-    marginRight: '10px'
   },
   cameraContainer: {
     textAlign: 'center' as const,
@@ -353,26 +303,6 @@ const styles = {
     fontSize: '0.9rem',
     fontWeight: '600'
   },
-  skipBtn: {
-    padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
-    border: '2px solid #e2e8f0',
-    cursor: 'pointer',
-    background: 'transparent',
-    color: '#718096',
-    fontSize: '0.9rem',
-    fontWeight: '600'
-  },
-  refreshBtn: {
-    padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
-    border: 'none',
-    cursor: 'pointer',
-    background: 'linear-gradient(135deg, #ed8936, #dd6b20)',
-    color: 'white',
-    fontSize: '0.9rem',
-    fontWeight: '600'
-  },
   debugBox: {
     marginTop: '2rem',
     padding: '1rem',
@@ -381,11 +311,6 @@ const styles = {
     fontSize: '0.8rem',
     color: '#4a5568',
     textAlign: 'left' as const
-  },
-  disconnectedMessage: {
-    fontSize: '1.1rem',
-    color: '#718096',
-    marginBottom: '2rem'
   }
 };
 
