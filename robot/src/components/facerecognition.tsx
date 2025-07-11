@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUser } from './UserContext';
+import { setUserName } from './UserHeader';
 
 interface EnhancedRobotStatus {
   status: string;
@@ -18,13 +18,13 @@ type WSMessage =
   | { type: 'pong' };
 
 const FaceRecognitionGate: React.FC = () => {
-  const { setCurrentUser } = useUser();
   const navigate = useNavigate();
   
-  // Core states - SAME AS WORKING COMPONENTS
+  // Core states
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [response, setResponse] = useState<string>('');
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [retryCount, setRetryCount] = useState(0);
   const maxRetries = 5;
 
@@ -38,19 +38,21 @@ const FaceRecognitionGate: React.FC = () => {
     };
   }, []);
 
-  // WebSocket setup - EXACT SAME AS arrow_keys.tsx
+  // WebSocket setup
   useEffect(() => {
     let reconnectTimer: number;
     
     const connect = () => {
       if (!mountedRef.current) return;
       
+      setConnectionStatus('connecting');
       const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
       setWs(websocket);
 
       websocket.onopen = () => {
         if (!mountedRef.current) return;
-        console.log('WebSocket connected');
+        console.log('✅ WebSocket connected');
+        setConnectionStatus('connected');
         setResponse('Scanning for faces...');
         setRetryCount(0);
       };
@@ -60,17 +62,11 @@ const FaceRecognitionGate: React.FC = () => {
         
         try {
           const data: WSMessage = JSON.parse(event.data);
-          console.log('📥 Received message:', data.type, data);
+          console.log('📥 Received:', data.type, data);
           
           switch (data.type) {
             case 'status_update':
               setStatus(data.data);
-              
-              console.log('Status:', {
-                awaiting_registration: data.data.awaiting_registration,
-                current_user: data.data.current_user,
-                attempts: data.data.face_recognition_attempts
-              });
               
               // If user recognized - go to menu
               if (data.data.current_user && 
@@ -78,7 +74,7 @@ const FaceRecognitionGate: React.FC = () => {
                   data.data.current_user !== '' && 
                   !data.data.awaiting_registration) {
                 console.log('✅ USER RECOGNIZED:', data.data.current_user);
-                setCurrentUser(data.data.current_user);
+                setUserName(data.data.current_user);
                 setResponse(`Welcome back, ${data.data.current_user}!`);
                 
                 setTimeout(() => {
@@ -117,6 +113,7 @@ const FaceRecognitionGate: React.FC = () => {
 
       websocket.onerror = () => {
         console.error('WebSocket error');
+        setConnectionStatus('disconnected');
         setResponse('Connection error');
       };
 
@@ -124,6 +121,7 @@ const FaceRecognitionGate: React.FC = () => {
         if (!mountedRef.current) return;
         
         console.log('WebSocket closed');
+        setConnectionStatus('disconnected');
         setResponse('Disconnected - reconnecting...');
         setWs(null);
         
@@ -138,7 +136,8 @@ const FaceRecognitionGate: React.FC = () => {
     if (retryCount < maxRetries) {
       connect();
     } else {
-      setResponse('Connection failed');
+      setConnectionStatus('disconnected');
+      setResponse('Connection failed after maximum retries');
     }
 
     return () => {
@@ -149,15 +148,19 @@ const FaceRecognitionGate: React.FC = () => {
         ws.close();
       }
     };
-  }, [retryCount]);
+  }, [retryCount, navigate]);
 
   // Camera setup
   useEffect(() => {
-    if (cameraRef.current) {
+    if (cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
       img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+      
+      img.onerror = () => {
+        console.warn('Camera stream not available');
+      };
     }
-  }, []);
+  }, [connectionStatus]);
 
   const sendWebSocketMessage = (type: string, data: any = {}) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
@@ -176,8 +179,13 @@ const FaceRecognitionGate: React.FC = () => {
 
   const continueAsGuest = () => {
     console.log('👤 CONTINUING AS GUEST');
-    setCurrentUser('Guest');
+    setUserName('Guest');
     navigate('/menu');
+  };
+
+  const goToRegistration = () => {
+    console.log('📝 GOING TO REGISTRATION');
+    navigate('/register');
   };
 
   return (
@@ -185,6 +193,18 @@ const FaceRecognitionGate: React.FC = () => {
       <div style={styles.card}>
         <h1 style={styles.title}>🤖 Robot Access Control</h1>
         <p style={styles.subtitle}>Face recognition security system</p>
+        
+        <div style={styles.connectionIndicator}>
+          <div style={{
+            ...styles.statusDot,
+            backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
+                            connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
+          }}></div>
+          <span>
+            {connectionStatus === 'connected' ? 'Connected' : 
+             connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+          </span>
+        </div>
         
         <div style={styles.cameraContainer}>
           <img
@@ -209,6 +229,9 @@ const FaceRecognitionGate: React.FC = () => {
           </button>
           <button onClick={continueAsGuest} style={styles.guestBtn}>
             👤 Continue as Guest
+          </button>
+          <button onClick={goToRegistration} style={styles.registerBtn}>
+            📝 Register as User
           </button>
         </div>
 
@@ -264,6 +287,19 @@ const styles = {
     marginBottom: '2rem',
     fontSize: '1.2rem'
   },
+  connectionIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '1rem',
+    fontSize: '0.9rem'
+  },
+  statusDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    marginRight: '8px'
+  },
   cameraContainer: {
     textAlign: 'center' as const,
     marginBottom: '2rem'
@@ -297,7 +333,7 @@ const styles = {
   },
   buttonRow: {
     display: 'flex',
-    gap: '1rem',
+    gap: '0.5rem',
     justifyContent: 'center',
     flexWrap: 'wrap' as const,
     marginBottom: '1rem'
@@ -320,8 +356,17 @@ const styles = {
     background: 'transparent',
     color: '#667eea',
     fontSize: '0.9rem',
-    fontWeight: '600',
-    transition: 'all 0.3s ease'
+    fontWeight: '600'
+  },
+  registerBtn: {
+    padding: '0.75rem 1.5rem',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    background: 'linear-gradient(135deg, #667eea, #764ba2)',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600'
   },
   debugBox: {
     marginTop: '2rem',
