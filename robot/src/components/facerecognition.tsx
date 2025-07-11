@@ -24,30 +24,33 @@ const FaceRecognitionGate: React.FC = () => {
   const [response, setResponse] = useState<string>('');
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 5;
 
   // Use refs to avoid stale closure issues
   const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectCountRef = useRef(0);
+  const maxRetries = 5;
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, []);
 
-  // Memoized message handler to avoid stale closures
-  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+  // Stable message handler
+  const handleMessage = useCallback((event: MessageEvent) => {
     if (!mountedRef.current) return;
     
     try {
@@ -68,7 +71,9 @@ const FaceRecognitionGate: React.FC = () => {
             setResponse(`Welcome back, ${data.data.current_user}!`);
             
             setTimeout(() => {
-              navigate('/menu');
+              if (mountedRef.current) {
+                navigate('/menu');
+              }
             }, 2000);
           }
           // If awaiting registration - go to registration page
@@ -101,22 +106,22 @@ const FaceRecognitionGate: React.FC = () => {
     }
   }, [navigate]);
 
-  // Memoized connection handlers
-  const handleWebSocketOpen = useCallback(() => {
+  // Stable connection handlers
+  const handleOpen = useCallback(() => {
     if (!mountedRef.current) return;
     console.log('✅ WebSocket connected');
     setConnectionStatus('connected');
     setResponse('Scanning for faces...');
-    setRetryCount(0);
+    reconnectCountRef.current = 0;
   }, []);
 
-  const handleWebSocketError = useCallback(() => {
+  const handleError = useCallback(() => {
     console.error('WebSocket error');
     setConnectionStatus('disconnected');
     setResponse('Connection error');
   }, []);
 
-  const handleWebSocketClose = useCallback(() => {
+  const handleClose = useCallback(() => {
     if (!mountedRef.current) return;
     
     console.log('WebSocket closed');
@@ -124,48 +129,55 @@ const FaceRecognitionGate: React.FC = () => {
     setResponse('Disconnected - reconnecting...');
     wsRef.current = null;
     
-    reconnectTimerRef.current = setTimeout(() => {
-      if (mountedRef.current) {
-        setRetryCount(prev => prev + 1);
-      }
-    }, 3000);
+    // Auto-reconnect with backoff
+    if (reconnectCountRef.current < maxRetries) {
+      reconnectCountRef.current++;
+      reconnectTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          initializeWebSocket();
+        }
+      }, 3000);
+    } else {
+      setResponse('Connection failed after maximum retries');
+    }
   }, []);
 
-  // WebSocket setup with proper event handler management
-  useEffect(() => {
-    if (retryCount >= maxRetries) {
-      setConnectionStatus('disconnected');
-      setResponse('Connection failed after maximum retries');
-      return;
-    }
-
+  // Initialize WebSocket
+  const initializeWebSocket = useCallback(() => {
     if (!mountedRef.current) return;
+    
+    // Close existing connection
+    if (wsRef.current) {
+      wsRef.current.removeEventListener('open', handleOpen);
+      wsRef.current.removeEventListener('message', handleMessage);
+      wsRef.current.removeEventListener('error', handleError);
+      wsRef.current.removeEventListener('close', handleClose);
+      wsRef.current.close();
+    }
     
     setConnectionStatus('connecting');
     setResponse('Connecting to robot...');
     
-    const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-    wsRef.current = websocket;
+    try {
+      const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = websocket;
 
-    // Attach event listeners
-    websocket.addEventListener('open', handleWebSocketOpen);
-    websocket.addEventListener('message', handleWebSocketMessage);
-    websocket.addEventListener('error', handleWebSocketError);
-    websocket.addEventListener('close', handleWebSocketClose);
+      // Attach event listeners
+      websocket.addEventListener('open', handleOpen);
+      websocket.addEventListener('message', handleMessage);
+      websocket.addEventListener('error', handleError);
+      websocket.addEventListener('close', handleClose);
+      
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error);
+      setConnectionStatus('disconnected');
+    }
+  }, [handleOpen, handleMessage, handleError, handleClose]);
 
-    return () => {
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-      if (websocket) {
-        websocket.removeEventListener('open', handleWebSocketOpen);
-        websocket.removeEventListener('message', handleWebSocketMessage);
-        websocket.removeEventListener('error', handleWebSocketError);
-        websocket.removeEventListener('close', handleWebSocketClose);
-        websocket.close();
-      }
-    };
-  }, [retryCount, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
+  // Initialize WebSocket only once
+  useEffect(() => {
+    initializeWebSocket();
+  }, [initializeWebSocket]);
 
   // Camera setup
   useEffect(() => {

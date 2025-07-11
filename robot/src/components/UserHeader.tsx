@@ -1,32 +1,82 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// Simple user management without complex context
+// Simple user management with better error handling
 const getUserName = (): string => {
-  return localStorage.getItem('robotUser') || 'Guest';
+  try {
+    return localStorage.getItem('robotUser') || 'Guest';
+  } catch (error) {
+    console.warn('LocalStorage not available:', error);
+    return 'Guest';
+  }
 };
 
 const setUserName = (name: string): void => {
-  localStorage.setItem('robotUser', name);
+  try {
+    localStorage.setItem('robotUser', name);
+  } catch (error) {
+    console.warn('LocalStorage not available:', error);
+  }
 };
 
 const logout = (): void => {
-  localStorage.setItem('robotUser', 'Guest');
-  window.location.href = '/'; // Go back to face recognition
+  try {
+    localStorage.setItem('robotUser', 'Guest');
+  } catch (error) {
+    console.warn('LocalStorage not available:', error);
+  }
+  
+  // Use window.location for more reliable navigation
+  if (typeof window !== 'undefined') {
+    window.location.href = '/';
+  }
 };
 
-// Simple User Header Component
+// Simple User Header Component with reactive updates
 interface UserHeaderProps {
   showLogout?: boolean;
 }
 
 export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => {
   const navigate = useNavigate();
-  const currentUser = getUserName();
+  const [currentUser, setCurrentUser] = useState<string>('Guest');
+
+  // Update user name when component mounts and on storage changes
+  useEffect(() => {
+    const updateUserName = () => {
+      setCurrentUser(getUserName());
+    };
+
+    // Initial load
+    updateUserName();
+
+    // Listen for storage changes (when user logs in/out in other tabs)
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'robotUser') {
+        updateUserName();
+      }
+    };
+
+    // Listen for custom events (when user logs in/out in same tab)
+    const handleCustomUserChange = () => {
+      updateUserName();
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('userChanged', handleCustomUserChange);
+
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('userChanged', handleCustomUserChange);
+    };
+  }, []);
+
   const isGuest = currentUser === 'Guest';
 
   const handleLogout = () => {
     logout();
+    // Dispatch custom event for same-tab updates
+    window.dispatchEvent(new CustomEvent('userChanged'));
   };
 
   const headerStyle = {
@@ -118,5 +168,14 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
   );
 };
 
-// Export simple user management functions
-export { getUserName, setUserName, logout };
+// Enhanced setUserName that triggers updates
+const setUserNameWithUpdate = (name: string): void => {
+  setUserName(name);
+  // Dispatch custom event to update UserHeader immediately
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('userChanged'));
+  }
+};
+
+// Export enhanced functions
+export { getUserName, setUserNameWithUpdate as setUserName, logout };

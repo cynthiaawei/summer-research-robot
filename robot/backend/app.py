@@ -612,215 +612,391 @@ async def stop_robot():
         logger.error(f"Error stopping robot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Fixed WebSocket endpoint in app.py
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """Enhanced WebSocket endpoint with ALL original functionality"""
+    """Enhanced WebSocket endpoint with better error handling"""
     await manager.connect(websocket)
     
     try:
         while True:
             try:
-                # Set a timeout for receiving messages
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                # Set a reasonable timeout for receiving messages
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
                 
                 try:
                     message = json.loads(data)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error: {e}")
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "data": {"message": "Invalid JSON format"}
                     }))
                     continue
+                    
             except asyncio.TimeoutError:
                 # Send ping to keep connection alive
-                await websocket.send_text(json.dumps({"type": "ping"}))
-                continue
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                    continue
+                except Exception as e:
+                    logger.error(f"Ping failed: {e}")
+                    break
+            except Exception as e:
+                logger.error(f"Error receiving message: {e}")
+                break
                 
-                message_type = message.get("type")
-                payload = message.get("data", {})
-                
-                # Handle ping/pong explicitly
-                if message_type == "ping":
+            message_type = message.get("type")
+            payload = message.get("data", {})
+            
+            # Handle ping/pong explicitly
+            if message_type == "ping":
+                try:
                     await websocket.send_text(json.dumps({"type": "pong"}))
                     continue
-                
-                if not robot_movement_available:
+                except Exception as e:
+                    logger.error(f"Pong failed: {e}")
+                    break
+            
+            if not robot_movement_available:
+                try:
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "data": {"message": "Enhanced robot movement module not available"}
                     }))
-                    continue
-                
-                try:
-                    if message_type == "direction_command":
-                        direction = payload.get("direction", "").lower()
-                        if direction:
-                            success = robot_movement.move(direction)
-                            manager.mark_status_changed()
-                            await manager.broadcast(json.dumps({
-                                "type": "direction_executed",
-                                "data": {"direction": direction, "success": success}
-                            }))
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "data": {"message": "No direction specified"}
-                            }))
-                    
-                    elif message_type == "text_command":
-                        text = payload.get("text", "")
-                        if text:
-                            parsed = robot_movement.parse_command(text)
-                            if parsed:
-                                direction, duration = parsed
-                                success = robot_movement.move(direction, duration_ms=duration)
-                                response = f"Command '{text}' executed successfully" if success else f"Command '{text}' failed"
-                            else:
-                                response = await robot_movement.chat(text)
-                                success = True
-                            
-                            manager.mark_status_changed()
-                            await manager.broadcast(json.dumps({
-                                "type": "text_command_result",
-                                "data": {"text": text, "success": success, "message": response}
-                            }))
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "data": {"message": "No text specified"}
-                            }))
-                    
-                    elif message_type == "speech_command":
-                        text = payload.get("text", "")
-                        if text:
-                            success = robot_movement.speak(text)
-                            manager.mark_status_changed()
-                            await manager.broadcast(json.dumps({
-                                "type": "speech_output",
-                                "data": {"text": text, "success": success}
-                            }))
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "data": {"message": "No speech text specified"}
-                            }))
-                    
-                    elif message_type == "listen_command":
-                        timeout = payload.get("timeout", 5)
-                        await manager.broadcast(json.dumps({
-                            "type": "listening_started",
-                            "data": {"timeout": timeout}
-                        }))
-                        
-                        speech_text = robot_movement.listen_for_speech(timeout)
-                        await manager.broadcast(json.dumps({
-                            "type": "speech_input",
-                            "data": {"text": speech_text, "success": speech_text is not None}
-                        }))
-                    
-                    elif message_type == "recognize_user":
-                        mode = payload.get("mode", "auto")
-                        user = robot_movement.recognize_user(mode)
+                except:
+                    break
+                continue
+            
+            try:
+                if message_type == "direction_command":
+                    direction = payload.get("direction", "").lower()
+                    if direction:
+                        success = robot_movement.move(direction)
                         manager.mark_status_changed()
                         await manager.broadcast(json.dumps({
-                            "type": "user_recognized",
-                            "data": {"user": user, "success": user is not None}
+                            "type": "direction_executed",
+                            "data": {"direction": direction, "success": success}
                         }))
-                    
-                    elif message_type == "register_user":
-                        name = payload.get("name", "")
-                        if name:
-                            logger.info(f"WebSocket: Registering user {name}")
-                            success = robot_movement.register_new_user(name)
-                            manager.mark_status_changed()
-                            await manager.broadcast(json.dumps({
-                                "type": "user_registered",
-                                "data": {"name": name, "success": success}
-                            }))
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "data": {"message": "No name specified"}
-                            }))
-                    
-                    elif message_type == "reset_face_recognition":
-                        logger.info("WebSocket: Face recognition reset requested")
-                        success = robot_movement.reset_face_recognition_state()
-                        
-                        if success:
-                            logger.info("✅ Face recognition reset successful - starting new 3-attempt cycle")
-                        
-                        manager.mark_status_changed()
-                        await manager.broadcast(json.dumps({
-                            "type": "face_recognition_reset",
-                            "data": {"success": success}
-                        }))
-                    
-                    elif message_type == "set_interaction_mode":
-                        mode = payload.get("mode", "")
-                        if mode:
-                            success = robot_movement.set_interaction_mode(mode)
-                            manager.mark_status_changed()
-                            await manager.broadcast(json.dumps({
-                                "type": "interaction_mode_changed",
-                                "data": {"mode": mode, "success": success}
-                            }))
-                        else:
-                            await websocket.send_text(json.dumps({
-                                "type": "error",
-                                "data": {"message": "No mode specified"}
-                            }))
-                    
-                    elif message_type == "conversation_mode":
-                        mode = payload.get("mode", "auto")
-                        response = await robot_movement.handle_conversation_mode(mode)
-                        await manager.broadcast(json.dumps({
-                            "type": "conversation_response",
-                            "data": {"mode": mode, "response": response}
-                        }))
-                    
-                    elif message_type == "stop_command":
-                        success = robot_movement.stop()
-                        manager.mark_status_changed()
-                        await manager.broadcast(json.dumps({
-                            "type": "robot_stopped",
-                            "data": {"message": "Robot stopped via WebSocket"}
-                        }))
-                    
-                    elif message_type == "reset_obstacle":
-                        success = robot_movement.reset_obstacle_detection()
-                        manager.mark_status_changed()
-                        await manager.broadcast(json.dumps({
-                            "type": "obstacle_reset",
-                            "data": {"message": "Obstacle detection reset", "success": success}
-                        }))
-                    
                     else:
                         await websocket.send_text(json.dumps({
                             "type": "error",
-                            "data": {"message": f"Unknown message type: {message_type}"}
+                            "data": {"message": "No direction specified"}
                         }))
+                
+                elif message_type == "text_command":
+                    text = payload.get("text", "")
+                    if text:
+                        parsed = robot_movement.parse_command(text)
+                        if parsed:
+                            direction, duration = parsed
+                            success = robot_movement.move(direction, duration_ms=duration)
+                            response = f"Command '{text}' executed successfully" if success else f"Command '{text}' failed"
+                        else:
+                            response = await robot_movement.chat(text)
+                            success = True
                         
-                except ValueError as e:
-                    logger.error(f"Invalid command: {e}")
+                        manager.mark_status_changed()
+                        await manager.broadcast(json.dumps({
+                            "type": "text_command_result",
+                            "data": {"text": text, "success": success, "message": response}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No text specified"}
+                        }))
+                
+                elif message_type == "speech_command":
+                    text = payload.get("text", "")
+                    if text:
+                        success = robot_movement.speak(text)
+                        manager.mark_status_changed()
+                        await manager.broadcast(json.dumps({
+                            "type": "speech_output",
+                            "data": {"text": text, "success": success}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No speech text specified"}
+                        }))
+                
+                elif message_type == "listen_command":
+                    timeout = payload.get("timeout", 5)
+                    await manager.broadcast(json.dumps({
+                        "type": "listening_started",
+                        "data": {"timeout": timeout}
+                    }))
+                    
+                    speech_text = robot_movement.listen_for_speech(timeout)
+                    await manager.broadcast(json.dumps({
+                        "type": "speech_input",
+                        "data": {"text": speech_text, "success": speech_text is not None}
+                    }))
+                
+                elif message_type == "recognize_user":
+                    mode = payload.get("mode", "auto")
+                    user = robot_movement.recognize_user(mode)
+                    manager.mark_status_changed()
+                    await manager.broadcast(json.dumps({
+                        "type": "user_recognized",
+                        "data": {"user": user, "success": user is not None}
+                    }))
+                
+                elif message_type == "register_user":
+                    name = payload.get("name", "")
+                    if name:
+                        logger.info(f"WebSocket: Registering user {name}")
+                        success = robot_movement.register_new_user(name)
+                        manager.mark_status_changed()
+                        await manager.broadcast(json.dumps({
+                            "type": "user_registered",
+                            "data": {"name": name, "success": success}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No name specified"}
+                        }))
+                
+                elif message_type == "reset_face_recognition":
+                    logger.info("WebSocket: Face recognition reset requested")
+                    success = robot_movement.reset_face_recognition_state()
+                    
+                    if success:
+                        logger.info("✅ Face recognition reset successful - starting new 3-attempt cycle")
+                    
+                    manager.mark_status_changed()
+                    await manager.broadcast(json.dumps({
+                        "type": "face_recognition_reset",
+                        "data": {"success": success}
+                    }))
+                
+                elif message_type == "set_interaction_mode":
+                    mode = payload.get("mode", "")
+                    if mode:
+                        success = robot_movement.set_interaction_mode(mode)
+                        manager.mark_status_changed()
+                        await manager.broadcast(json.dumps({
+                            "type": "interaction_mode_changed",
+                            "data": {"mode": mode, "success": success}
+                        }))
+                    else:
+                        await websocket.send_text(json.dumps({
+                            "type": "error",
+                            "data": {"message": "No mode specified"}
+                        }))
+                
+                elif message_type == "conversation_mode":
+                    mode = payload.get("mode", "auto")
+                    response = await robot_movement.handle_conversation_mode(mode)
+                    await manager.broadcast(json.dumps({
+                        "type": "conversation_response",
+                        "data": {"mode": mode, "response": response}
+                    }))
+                
+                elif message_type == "stop_command":
+                    success = robot_movement.stop()
+                    manager.mark_status_changed()
+                    await manager.broadcast(json.dumps({
+                        "type": "robot_stopped",
+                        "data": {"message": "Robot stopped via WebSocket"}
+                    }))
+                
+                elif message_type == "reset_obstacle":
+                    success = robot_movement.reset_obstacle_detection()
+                    manager.mark_status_changed()
+                    await manager.broadcast(json.dumps({
+                        "type": "obstacle_reset",
+                        "data": {"message": "Obstacle detection reset", "success": success}
+                    }))
+                
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "data": {"message": f"Unknown message type: {message_type}"}
+                    }))
+                    
+            except ValueError as e:
+                logger.error(f"Invalid command: {e}")
+                try:
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "data": {"message": f"Invalid command: {str(e)}"}
                     }))
-                except Exception as e:
-                    logger.error(f"Error processing WebSocket message: {e}")
+                except:
+                    break
+            except Exception as e:
+                logger.error(f"Error processing WebSocket message: {e}")
+                try:
                     await websocket.send_text(json.dumps({
                         "type": "error",
                         "data": {"message": f"Error processing command: {str(e)}"}
                     }))
+                except:
+                    break
     
     except WebSocketDisconnect:
-        await manager.disconnect(websocket)
-        logger.info("Client disconnected from WebSocket")
+        logger.info("Client disconnected from WebSocket normally")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+    finally:
         await manager.disconnect(websocket)
 
+
+# Improved Connection Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.connection_lock = asyncio.Lock()
+        self.last_status = None
+        self.status_changed = True
+
+    async def connect(self, websocket: WebSocket):
+        try:
+            await websocket.accept()
+            async with self.connection_lock:
+                self.active_connections.append(websocket)
+            logger.info(f"Client connected. Total connections: {len(self.active_connections)}")
+        except Exception as e:
+            logger.error(f"Error accepting WebSocket connection: {e}")
+
+    async def disconnect(self, websocket: WebSocket):
+        async with self.connection_lock:
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+        logger.info(f"Client disconnected. Total connections: {len(self.active_connections)}")
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        try:
+            if websocket.client_state.value == 1:  # Connected
+                await websocket.send_text(message)
+        except Exception as e:
+            logger.error(f"Error sending personal message: {e}")
+            await self.disconnect(websocket)
+
+    async def broadcast(self, message: str):
+        if not self.active_connections:
+            return
+            
+        disconnected = []
+        async with self.connection_lock:
+            connections_copy = self.active_connections.copy()
+        
+        for connection in connections_copy:
+            try:
+                if connection.client_state.value == 1:  # Connected
+                    await connection.send_text(message)
+            except Exception as e:
+                logger.warning(f"Error broadcasting to connection: {e}")
+                disconnected.append(connection)
+        
+        # Remove disconnected connections
+        if disconnected:
+            async with self.connection_lock:
+                for connection in disconnected:
+                    if connection in self.active_connections:
+                        self.active_connections.remove(connection)
+
+    def mark_status_changed(self):
+        """Mark that status has changed and needs to be broadcast"""
+        self.status_changed = True
+
+
+# Improved status broadcaster
+async def broadcast_status():
+    """Broadcast enhanced robot status to all connected clients - IMPROVED"""
+    
+    while True:
+        try:
+            if len(manager.active_connections) > 0:
+                if robot_movement_available:
+                    try:
+                        current_status = robot_movement.get_status()
+                        
+                        # Only broadcast if status changed
+                        if (current_status != manager.last_status or 
+                            manager.status_changed):
+                            
+                            await manager.broadcast(json.dumps({
+                                "type": "status_update",
+                                "data": current_status
+                            }))
+                            manager.last_status = current_status.copy() if isinstance(current_status, dict) else current_status
+                            manager.status_changed = False
+                            
+                    except Exception as e:
+                        logger.error(f"Error getting robot status: {e}")
+                        # Send error status if robot fails
+                        error_status = {
+                            "status": "error",
+                            "message": f"Robot status error: {str(e)}",
+                            "obstacle_detected": False,
+                            "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
+                            "sensor_distances": {},
+                            "last_command": "",
+                            "uptime": 0.0,
+                            "gpio_available": False,
+                            "current_user": "Unknown",
+                            "faces_detected": [],
+                            "hand_gesture": "none",
+                            "camera_active": False,
+                            "last_speech_output": "",
+                            "listening": False,
+                            "speech_recognition_active": False,
+                            "interaction_mode": "idle",
+                            "face_recognition_available": False,
+                            "speech_recognition_available": False,
+                            "mediapipe_available": False,
+                            "face_recognition_attempts": 0,
+                            "awaiting_registration": False
+                        }
+                        
+                        if error_status != manager.last_status:
+                            await manager.broadcast(json.dumps({
+                                "type": "status_update",
+                                "data": error_status
+                            }))
+                            manager.last_status = error_status
+                else:
+                    offline_status = {
+                        "status": "disconnected",
+                        "message": "Enhanced robot movement module not available",
+                        "obstacle_detected": False,
+                        "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0},
+                        "sensor_distances": {},
+                        "last_command": "",
+                        "uptime": 0.0,
+                        "gpio_available": False,
+                        "current_user": "Unknown",
+                        "faces_detected": [],
+                        "hand_gesture": "none",
+                        "camera_active": False,
+                        "last_speech_output": "",
+                        "listening": False,
+                        "speech_recognition_active": False,
+                        "interaction_mode": "idle",
+                        "face_recognition_available": False,
+                        "speech_recognition_available": False,
+                        "mediapipe_available": False,
+                        "face_recognition_attempts": 0,
+                        "awaiting_registration": False
+                    }
+                    
+                    if offline_status != manager.last_status:
+                        await manager.broadcast(json.dumps({
+                            "type": "status_update",
+                            "data": offline_status
+                        }))
+                        manager.last_status = offline_status
+            
+            await asyncio.sleep(0.5)  # Broadcast every 500ms
+        except Exception as e:
+            logger.error(f"Error in status broadcaster: {e}")
+            await asyncio.sleep(1)
+            
+             
 # Health check endpoint with better error handling
 @app.get("/api/health")
 async def health_check():

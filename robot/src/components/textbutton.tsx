@@ -42,13 +42,113 @@ type WSMessage =
   | { type: 'ping' }
   | { type: 'pong' };
 
+// Enhanced Camera Component (same as in Speech component)
+const CameraFeed: React.FC<{ showCamera: boolean; isConnected: boolean }> = ({ showCamera, isConnected }) => {
+  const cameraRef = useRef<HTMLImageElement>(null);
+  const [cameraStatus, setCameraStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
+
+  useEffect(() => {
+    if (showCamera) {
+      setCameraStatus('loading');
+      setRetryCount(0);
+    }
+  }, [showCamera]);
+
+  useEffect(() => {
+    if (!showCamera || !isConnected || !cameraRef.current) {
+      return;
+    }
+
+    const img = cameraRef.current;
+    let timeoutId: NodeJS.Timeout;
+
+    const handleLoad = () => {
+      setCameraStatus('loaded');
+      console.log('✅ Camera stream loaded successfully');
+    };
+
+    const handleError = () => {
+      console.warn('❌ Camera stream failed to load');
+      setCameraStatus('error');
+      
+      if (retryCount < maxRetries) {
+        setTimeout(() => {
+          if (cameraRef.current && showCamera && isConnected) {
+            setRetryCount(prev => prev + 1);
+            setCameraStatus('loading');
+            const timestamp = Date.now();
+            cameraRef.current.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${timestamp}`;
+          }
+        }, (retryCount + 1) * 2000);
+      }
+    };
+
+    timeoutId = setTimeout(() => {
+      if (cameraStatus === 'loading') {
+        handleError();
+      }
+    }, 10000);
+
+    img.addEventListener('load', handleLoad);
+    img.addEventListener('error', handleError);
+
+    const timestamp = Date.now();
+    img.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${timestamp}`;
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      img.removeEventListener('load', handleLoad);
+      img.removeEventListener('error', handleError);
+    };
+  }, [showCamera, isConnected, retryCount, cameraStatus]);
+
+  const retryCamera = useCallback(() => {
+    setRetryCount(0);
+    setCameraStatus('loading');
+  }, []);
+
+  if (!showCamera) return null;
+
+  return (
+    <div style={styles.cameraContainer}>
+      {cameraStatus === 'loading' && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.spinner}></div>
+          <p>Loading camera feed...</p>
+          {retryCount > 0 && <p>Retry {retryCount}/{maxRetries}</p>}
+        </div>
+      )}
+      
+      {cameraStatus === 'error' && (
+        <div style={styles.errorOverlay}>
+          <p>❌ Camera feed unavailable</p>
+          <button onClick={retryCamera} style={styles.retryBtn}>
+            🔄 Retry
+          </button>
+        </div>
+      )}
+
+      <img
+        ref={cameraRef}
+        alt="Robot Camera Feed"
+        style={{
+          ...styles.cameraFeed,
+          opacity: cameraStatus === 'loaded' ? 1 : 0,
+          transition: 'opacity 0.3s ease'
+        }}
+      />
+    </div>
+  );
+};
+
 const TextButton: React.FC = () => {
   const [text, setText] = useState('');
   const [response, setResponse] = useState<{ message: string; isError: boolean }>({ message: '', isError: false });
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 5;
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   // Enhanced state
   const [speechText, setSpeechText] = useState('');
@@ -66,155 +166,183 @@ const TextButton: React.FC = () => {
     'Tell me a joke'
   ]);
 
-  const socketRef = useRef<WebSocket | null>(null);
-  const cameraRef = useRef<HTMLImageElement>(null);
+  // Use refs to avoid stale closure issues
+  const wsRef = useRef<WebSocket | null>(null);
   const mountedRef = useRef(true);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectCountRef = useRef(0);
+  const maxRetries = 5;
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-    };
-  }, []);
-
-  const addToConversationHistory = useCallback((message: string) => {
-    if (!mountedRef.current) return;
-    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
-  }, []);
-
-  // Memoized WebSocket handlers
-  const handleWebSocketOpen = useCallback(() => {
-    if (!mountedRef.current) return;
-    console.log('✅ Text WebSocket connected');
-    setResponse({ message: 'Connected to enhanced robot', isError: false });
-    setRetryCount(0);
-  }, []);
-
-  const handleWebSocketError = useCallback(() => {
-    console.error('Text WS error');
-    setResponse({ message: 'WebSocket error', isError: true });
-    setIsLoading(false);
-  }, []);
-
-  const handleWebSocketClose = useCallback(() => {
-    if (!mountedRef.current) return;
-    console.warn('Text WS closed — reconnecting');
-    socketRef.current = null;
-    setTimeout(() => {
-      setRetryCount(c => c + 1);
-    }, 5000);
-  }, []);
-
-  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
-    if (!mountedRef.current) return;
-    
-    let msg: WSMessage;
-    try {
-      msg = JSON.parse(event.data);
-    } catch {
-      setResponse({ message: 'WS parse error', isError: true });
-      setIsLoading(false);
-      return;
-    }
-
-    switch (msg.type) {
-      case 'status_update':
-        setStatus(msg.data);
-        break;
-      case 'text_command_processed':
-      case 'text_command_result':
-        setResponse({ message: msg.data.message, isError: !msg.data.success });
-        addToConversationHistory(`📋 Response: ${msg.data.message}`);
-        break;
-      case 'speech_output':
-        const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
-        setResponse({ message: speechMsg, isError: !msg.data.success });
-        addToConversationHistory(speechMsg);
-        break;
-      case 'user_recognized':
-        if (msg.data.success && msg.data.user) {
-          const userMsg = `👤 User recognized: ${msg.data.user}`;
-          setResponse({ message: userMsg, isError: false });
-          addToConversationHistory(userMsg);
-        } else {
-          setResponse({ message: '❓ No user recognized', isError: true });
-        }
-        break;
-      case 'user_registered':
-        const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
-        setResponse({ message: regMsg, isError: !msg.data.success });
-        addToConversationHistory(regMsg);
-        if (msg.data.success) {
-          setUserRegistrationName('');
-        }
-        break;
-      case 'conversation_response':
-        const convMsg = `💬 Robot: ${msg.data.response}`;
-        setResponse({ message: convMsg, isError: false });
-        addToConversationHistory(convMsg);
-        break;
-      case 'direction_executed':
-        setResponse({
-          message: `Direction ${msg.data.direction} ${msg.data.success ? 'succeeded' : 'failed'}`,
-          isError: !msg.data.success
-        });
-        break;
-      case 'robot_stopped':
-        setResponse({ message: msg.data.message, isError: false });
-        break;
-      case 'obstacle_reset':
-        setResponse({ message: msg.data.message, isError: !msg.data.success });
-        break;
-      case 'error':
-        setResponse({ message: msg.data.message, isError: true });
-        break;
-    }
-    setIsLoading(false);
-  }, [addToConversationHistory]);
-
-  useEffect(() => {
-    if (retryCount >= maxRetries) {
-      setResponse({ message: 'Max WS retries reached', isError: true });
-      return;
-    }
-
-    if (!mountedRef.current) return;
-
-    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-    socketRef.current = ws;
-
-    // Attach event listeners
-    ws.addEventListener('open', handleWebSocketOpen);
-    ws.addEventListener('message', handleWebSocketMessage);
-    ws.addEventListener('error', handleWebSocketError);
-    ws.addEventListener('close', handleWebSocketClose);
-
-    return () => {
-      if (ws) {
-        ws.removeEventListener('open', handleWebSocketOpen);
-        ws.removeEventListener('message', handleWebSocketMessage);
-        ws.removeEventListener('error', handleWebSocketError);
-        ws.removeEventListener('close', handleWebSocketClose);
-        ws.close();
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
     };
-  }, [retryCount, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
+  }, []);
 
-  // Camera stream setup
-  useEffect(() => {
-    if (showCamera && cameraRef.current) {
-      const img = cameraRef.current;
-      img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
-    }
-  }, [showCamera]);
+  // Stable functions
+  const addToConversationHistory = useCallback((message: string) => {
+    if (!mountedRef.current) return;
+    setConversationHistory(prev => [...prev.slice(-9), message]);
+  }, []);
 
   const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type, data }));
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type, data }));
     } else {
       setResponse({ message: 'WebSocket not connected', isError: true });
     }
   }, []);
+
+  // Message handlers
+  const handleMessage = useCallback((event: MessageEvent) => {
+    if (!mountedRef.current) return;
+    
+    try {
+      const msg: WSMessage = JSON.parse(event.data);
+
+      switch (msg.type) {
+        case 'status_update':
+          setStatus(msg.data);
+          break;
+        case 'text_command_processed':
+        case 'text_command_result':
+          setResponse({ message: msg.data.message, isError: !msg.data.success });
+          addToConversationHistory(`📋 Response: ${msg.data.message}`);
+          setIsLoading(false);
+          break;
+        case 'speech_output':
+          const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
+          setResponse({ message: speechMsg, isError: !msg.data.success });
+          addToConversationHistory(speechMsg);
+          setIsLoading(false);
+          break;
+        case 'user_recognized':
+          if (msg.data.success && msg.data.user) {
+            const userMsg = `👤 User recognized: ${msg.data.user}`;
+            setResponse({ message: userMsg, isError: false });
+            addToConversationHistory(userMsg);
+          } else {
+            setResponse({ message: '❓ No user recognized', isError: true });
+          }
+          break;
+        case 'user_registered':
+          const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
+          setResponse({ message: regMsg, isError: !msg.data.success });
+          addToConversationHistory(regMsg);
+          if (msg.data.success) {
+            setUserRegistrationName('');
+          }
+          break;
+        case 'conversation_response':
+          const convMsg = `💬 Robot: ${msg.data.response}`;
+          setResponse({ message: convMsg, isError: false });
+          addToConversationHistory(convMsg);
+          setIsLoading(false);
+          break;
+        case 'direction_executed':
+          setResponse({
+            message: `Direction ${msg.data.direction} ${msg.data.success ? 'succeeded' : 'failed'}`,
+            isError: !msg.data.success
+          });
+          setIsLoading(false);
+          break;
+        case 'robot_stopped':
+          setResponse({ message: msg.data.message, isError: false });
+          setIsLoading(false);
+          break;
+        case 'obstacle_reset':
+          setResponse({ message: msg.data.message, isError: !msg.data.success });
+          setIsLoading(false);
+          break;
+        case 'error':
+          setResponse({ message: msg.data.message, isError: true });
+          setIsLoading(false);
+          break;
+      }
+    } catch (error) {
+      setResponse({ message: 'WS parse error', isError: true });
+      setIsLoading(false);
+    }
+  }, [addToConversationHistory]);
+
+  // Connection handlers
+  const handleOpen = useCallback(() => {
+    if (!mountedRef.current) return;
+    console.log('✅ Text WebSocket connected');
+    setConnectionStatus('connected');
+    setResponse({ message: 'Connected to enhanced robot', isError: false });
+    reconnectCountRef.current = 0;
+  }, []);
+
+  const handleError = useCallback(() => {
+    console.error('Text WS error');
+    setConnectionStatus('disconnected');
+    setResponse({ message: 'WebSocket error', isError: true });
+    setIsLoading(false);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    if (!mountedRef.current) return;
+    
+    console.warn('Text WS closed — reconnecting');
+    setConnectionStatus('disconnected');
+    wsRef.current = null;
+    
+    if (reconnectCountRef.current < maxRetries) {
+      reconnectCountRef.current++;
+      reconnectTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          initializeWebSocket();
+        }
+      }, 3000);
+    } else {
+      setResponse({ message: 'Max WS retries reached', isError: true });
+    }
+  }, []);
+
+  // Initialize WebSocket
+  const initializeWebSocket = useCallback(() => {
+    if (!mountedRef.current) return;
+    
+    if (wsRef.current) {
+      wsRef.current.removeEventListener('open', handleOpen);
+      wsRef.current.removeEventListener('message', handleMessage);
+      wsRef.current.removeEventListener('error', handleError);
+      wsRef.current.removeEventListener('close', handleClose);
+      wsRef.current.close();
+    }
+    
+    setConnectionStatus('connecting');
+    
+    try {
+      const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = ws;
+
+      ws.addEventListener('open', handleOpen);
+      ws.addEventListener('message', handleMessage);
+      ws.addEventListener('error', handleError);
+      ws.addEventListener('close', handleClose);
+      
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error);
+      setConnectionStatus('disconnected');
+    }
+  }, [handleOpen, handleMessage, handleError, handleClose]);
+
+  // Initialize WebSocket only once
+  useEffect(() => {
+    initializeWebSocket();
+  }, [initializeWebSocket]);
 
   const sendTextCommandViaHTTP = async (cmd: string) => {
     try {
@@ -237,6 +365,8 @@ const TextButton: React.FC = () => {
       }
 
       setResponse({ message: msg, isError: true });
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -252,7 +382,7 @@ const TextButton: React.FC = () => {
     setText('');
 
     // Try WebSocket first, fallback to HTTP
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
+    if (connectionStatus === 'connected') {
       sendWebSocketMessage('text_command', { text: cmd });
     } else {
       sendTextCommandViaHTTP(cmd);
@@ -306,6 +436,7 @@ const TextButton: React.FC = () => {
         input, button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0,0,0,0.2); }
         input:focus, button:focus { outline: 2px solid #667eea; outline-offset: 2px; }
         button:active:not(:disabled) { transform: translateY(-4px); }
+        @keyframes spin {0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
       `}</style>
 
       {/* User Header - Shows "Hi {name}" */}
@@ -314,6 +445,22 @@ const TextButton: React.FC = () => {
       <div style={{ ...styles.card, marginTop: '5rem' }}>
         <h2 style={styles.title}>Enhanced Text Command Control</h2>
         <p style={styles.subtitle}>Natural language commands with face recognition and speech</p>
+
+        {/* Connection Status */}
+        <div style={styles.connectionIndicator}>
+          <div style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            marginRight: '8px',
+            backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
+                            connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
+          }}></div>
+          <span>
+            {connectionStatus === 'connected' ? 'Connected' : 
+             connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+          </span>
+        </div>
 
         {/* Camera & User Management */}
         <div style={styles.section}>
@@ -333,15 +480,7 @@ const TextButton: React.FC = () => {
             </button>
           </div>
 
-          {showCamera && (
-            <div style={styles.cameraContainer}>
-              <img
-                ref={cameraRef}
-                alt="Robot Camera Feed"
-                style={styles.cameraFeed}
-              />
-            </div>
-          )}
+          <CameraFeed showCamera={showCamera} isConnected={connectionStatus === 'connected'} />
 
           <div style={styles.userInfo}>
             <span><strong>Current User:</strong> {status?.current_user || 'Unknown'}</span>
@@ -401,47 +540,8 @@ const TextButton: React.FC = () => {
               >
                 {preset}
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Main Command Input */}
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>💻 Command Input</h3>
-          <label htmlFor="cmd" style={styles.label}>Enter Command</label>
-          <input
-            id="cmd"
-            type="text"
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="e.g. go forward 2 seconds, turn left, Hello robot!"
-            style={styles.mainInput}
-            disabled={isLoading}
-          />
-
-          <div style={styles.buttonRow}>
-            <button
-              onClick={handleSubmit}
-              disabled={isLoading || !text.trim()}
-              style={{
-                ...styles.primaryBtn,
-                background: isLoading || !text.trim() ? '#a0aec0' : 'linear-gradient(135deg, #48bb78, #38a169)',
-                cursor: isLoading || !text.trim() ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {isLoading ? 'Sending…' : '📤 Send Command'}
-            </button>
-            
-            {status?.obstacle_detected && (
-              <button
-                onClick={resetObstacle}
-                style={styles.dangerBtn}
-              >
-                🚨 Reset Obstacle
-              </button>
-            )}
-          </div>
+            ))}       
+            </div>
         </div>
 
         {/* Conversation History */}
@@ -465,8 +565,16 @@ const TextButton: React.FC = () => {
           </div>
         </div>
 
+        {/* Loading Indicator */}
+        {isLoading && (
+          <div style={styles.loadingMessage}>
+            <div style={styles.spinner}></div>
+            Processing command…
+          </div>
+        )}
+
         {/* Response Display */}
-        {response.message && (
+        {!isLoading && response.message && (
           <div style={{
             marginTop: '1rem',
             padding: '1rem',
@@ -573,6 +681,13 @@ const styles = {
     marginBottom: '2rem',
     fontSize: '1.1rem'
   },
+  connectionIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '1rem',
+    fontSize: '0.9rem'
+  },
   section: {
     marginBottom: '1.5rem',
     padding: '1rem',
@@ -654,6 +769,17 @@ const styles = {
     fontSize: '0.8rem',
     fontWeight: '600'
   },
+  retryBtn: {
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    border: 'none',
+    cursor: 'pointer',
+    background: '#667eea',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    marginTop: '0.5rem'
+  },
   presetBtn: {
     padding: '0.5rem 1rem',
     borderRadius: '6px',
@@ -698,14 +824,48 @@ const styles = {
     gap: '0.5rem'
   },
   cameraContainer: {
+    position: 'relative' as const,
+    textAlign: 'center' as const,
     marginTop: '1rem',
-    textAlign: 'center' as const
+    minHeight: '300px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   cameraFeed: {
     maxWidth: '100%',
     height: 'auto',
     borderRadius: '12px',
-    border: '2px solid #e2e8f0'
+    border: '2px solid #e2e8f0',
+    minHeight: '300px',
+    backgroundColor: '#f7fafc'
+  },
+  loadingOverlay: {
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    textAlign: 'center' as const,
+    color: '#4a5568',
+    zIndex: 10
+  },
+  errorOverlay: {
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    textAlign: 'center' as const,
+    color: '#e53e3e',
+    zIndex: 10
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '4px solid #f3f3f3',
+    borderTop: '4px solid #667eea',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+    margin: '0 auto 1rem'
   },
   userInfo: {
     display: 'flex',
@@ -739,6 +899,18 @@ const styles = {
     textAlign: 'center' as const,
     color: '#a0aec0',
     fontStyle: 'italic'
+  },
+  loadingMessage: {
+    color: '#4a5568',
+    fontStyle: 'italic',
+    marginBottom: '1rem',
+    padding: '1rem',
+    background: '#f0f4f8',
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '1rem'
   },
   statusCard: {
     marginTop: '1.5rem',

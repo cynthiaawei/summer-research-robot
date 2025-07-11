@@ -41,6 +41,107 @@ type WSMessage =
   | { type: 'ping' }
   | { type: 'pong' };
 
+// Enhanced Camera Component
+const CameraFeed: React.FC<{ showCamera: boolean; isConnected: boolean }> = ({ showCamera, isConnected }) => {
+  const cameraRef = useRef<HTMLImageElement>(null);
+  const [cameraStatus, setCameraStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
+  const [retryCount, setRetryCount] = useState(0);
+  const maxRetries = 3;
+
+  useEffect(() => {
+    if (showCamera) {
+      setCameraStatus('loading');
+      setRetryCount(0);
+    }
+  }, [showCamera]);
+
+  useEffect(() => {
+    if (!showCamera || !isConnected || !cameraRef.current) {
+      return;
+    }
+
+    const img = cameraRef.current;
+    let timeoutId: NodeJS.Timeout;
+
+    const handleLoad = () => {
+      setCameraStatus('loaded');
+      console.log('✅ Camera stream loaded successfully');
+    };
+
+    const handleError = () => {
+      console.warn('❌ Camera stream failed to load');
+      setCameraStatus('error');
+      
+      if (retryCount < maxRetries) {
+        setTimeout(() => {
+          if (cameraRef.current && showCamera && isConnected) {
+            setRetryCount(prev => prev + 1);
+            setCameraStatus('loading');
+            const timestamp = Date.now();
+            cameraRef.current.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${timestamp}`;
+          }
+        }, (retryCount + 1) * 2000);
+      }
+    };
+
+    timeoutId = setTimeout(() => {
+      if (cameraStatus === 'loading') {
+        handleError();
+      }
+    }, 10000);
+
+    img.addEventListener('load', handleLoad);
+    img.addEventListener('error', handleError);
+
+    const timestamp = Date.now();
+    img.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${timestamp}`;
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      img.removeEventListener('load', handleLoad);
+      img.removeEventListener('error', handleError);
+    };
+  }, [showCamera, isConnected, retryCount, cameraStatus]);
+
+  const retryCamera = useCallback(() => {
+    setRetryCount(0);
+    setCameraStatus('loading');
+  }, []);
+
+  if (!showCamera) return null;
+
+  return (
+    <div style={styles.cameraContainer}>
+      {cameraStatus === 'loading' && (
+        <div style={styles.loadingOverlay}>
+          <div style={styles.spinner}></div>
+          <p>Loading camera feed...</p>
+          {retryCount > 0 && <p>Retry {retryCount}/{maxRetries}</p>}
+        </div>
+      )}
+      
+      {cameraStatus === 'error' && (
+        <div style={styles.errorOverlay}>
+          <p>❌ Camera feed unavailable</p>
+          <button onClick={retryCamera} style={styles.retryBtn}>
+            🔄 Retry
+          </button>
+        </div>
+      )}
+
+      <img
+        ref={cameraRef}
+        alt="Robot Camera Feed"
+        style={{
+          ...styles.cameraFeed,
+          opacity: cameraStatus === 'loaded' ? 1 : 0,
+          transition: 'opacity 0.3s ease'
+        }}
+      />
+    </div>
+  );
+};
+
 const Speech: React.FC = () => {
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
@@ -51,8 +152,7 @@ const Speech: React.FC = () => {
   const [response, setResponse] = useState<{ message: string; isError: boolean }>({ message: '', isError: false });
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 5;
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   // Enhanced state
   const [speechText, setSpeechText] = useState('');
@@ -63,23 +163,23 @@ const Speech: React.FC = () => {
 
   // Use refs to avoid stale closure issues
   const wsRef = useRef<WebSocket | null>(null);
-  const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectCountRef = useRef(0);
+  const maxRetries = 5;
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
-      }
-      if (pingIntervalRef.current) {
-        clearInterval(pingIntervalRef.current);
+        reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, []);
@@ -139,13 +239,22 @@ const Speech: React.FC = () => {
     }
   }, [finalTranscript]);
 
+  // Stable functions
   const addToConversationHistory = useCallback((message: string) => {
     if (!mountedRef.current) return;
-    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
+    setConversationHistory(prev => [...prev.slice(-9), message]);
   }, []);
 
-  // Memoized message handler to avoid stale closures
-  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type, data }));
+    } else {
+      setResponse({ message: 'WebSocket not connected', isError: true });
+    }
+  }, []);
+
+  // Message handlers
+  const handleMessage = useCallback((event: MessageEvent) => {
     if (!mountedRef.current) return;
     
     try {
@@ -166,7 +275,6 @@ const Speech: React.FC = () => {
             const heardMsg = `👂 Heard: "${msg.data.text}"`;
             setResponse({ message: heardMsg, isError: false });
             addToConversationHistory(heardMsg);
-            // Auto-process the speech command
             handleWebSocketSpeechCommand(msg.data.text);
           } else {
             setResponse({ message: '❌ No speech detected', isError: true });
@@ -223,101 +331,74 @@ const Speech: React.FC = () => {
     }
   }, [addToConversationHistory]);
 
-  // Memoized connection handlers
-  const handleWebSocketOpen = useCallback(() => {
+  // Connection handlers
+  const handleOpen = useCallback(() => {
     if (!mountedRef.current) return;
     console.log('✅ Speech WebSocket connected');
+    setConnectionStatus('connected');
     setResponse({ message: 'Connected to enhanced robot', isError: false });
-    setRetryCount(0);
-
-    // Setup ping interval
-    pingIntervalRef.current = setInterval(() => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'ping' }));
-      }
-    }, 30000);
+    reconnectCountRef.current = 0;
   }, []);
 
-  const handleWebSocketError = useCallback(() => {
+  const handleError = useCallback(() => {
     console.error('Speech WebSocket error');
+    setConnectionStatus('disconnected');
     setResponse({ message: 'WebSocket error', isError: true });
     setIsLoading(false);
   }, []);
 
-  const handleWebSocketClose = useCallback(() => {
+  const handleClose = useCallback(() => {
     if (!mountedRef.current) return;
     
     console.warn('Speech WebSocket closed, retrying...');
-    if (pingIntervalRef.current) {
-      clearInterval(pingIntervalRef.current);
-    }
+    setConnectionStatus('disconnected');
     wsRef.current = null;
     
-    reconnectTimerRef.current = setTimeout(() => {
-      if (mountedRef.current) {
-        setRetryCount(prev => prev + 1);
-      }
-    }, 5000);
+    if (reconnectCountRef.current < maxRetries) {
+      reconnectCountRef.current++;
+      reconnectTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          initializeWebSocket();
+        }
+      }, 3000);
+    } else {
+      setResponse({ message: 'Max WS retries reached', isError: true });
+    }
   }, []);
 
-  // WebSocket connection
-  useEffect(() => {
-    if (retryCount >= maxRetries) {
-      setResponse({ message: 'Max WS retries reached', isError: true });
-      return;
-    }
-
+  // Initialize WebSocket
+  const initializeWebSocket = useCallback(() => {
     if (!mountedRef.current) return;
     
-    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-    wsRef.current = ws;
+    if (wsRef.current) {
+      wsRef.current.removeEventListener('open', handleOpen);
+      wsRef.current.removeEventListener('message', handleMessage);
+      wsRef.current.removeEventListener('error', handleError);
+      wsRef.current.removeEventListener('close', handleClose);
+      wsRef.current.close();
+    }
+    
+    setConnectionStatus('connecting');
+    
+    try {
+      const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = ws;
 
-    // Attach event listeners
-    ws.addEventListener('open', handleWebSocketOpen);
-    ws.addEventListener('message', handleWebSocketMessage);
-    ws.addEventListener('error', handleWebSocketError);
-    ws.addEventListener('close', handleWebSocketClose);
+      ws.addEventListener('open', handleOpen);
+      ws.addEventListener('message', handleMessage);
+      ws.addEventListener('error', handleError);
+      ws.addEventListener('close', handleClose);
+      
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error);
+      setConnectionStatus('disconnected');
+    }
+  }, [handleOpen, handleMessage, handleError, handleClose]);
 
-    return () => {
-      if (pingIntervalRef.current) {
-        clearInterval(pingIntervalRef.current);
-      }
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-      if (ws) {
-        ws.removeEventListener('open', handleWebSocketOpen);
-        ws.removeEventListener('message', handleWebSocketMessage);
-        ws.removeEventListener('error', handleWebSocketError);
-        ws.removeEventListener('close', handleWebSocketClose);
-        ws.close();
-      }
-    };
-  }, [retryCount, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
-
-  // Camera stream setup
+  // Initialize WebSocket only once
   useEffect(() => {
-    if (showCamera && cameraRef.current) {
-      const img = cameraRef.current;
-      img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
-      
-      img.onerror = () => {
-        console.warn('Camera stream not available');
-      };
-      
-      img.onload = () => {
-        console.log('✅ Camera stream loaded successfully');
-      };
-    }
-  }, [showCamera]);
-
-  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type, data }));
-    } else {
-      setResponse({ message: 'WebSocket not connected', isError: true });
-    }
-  }, []);
+    initializeWebSocket();
+  }, [initializeWebSocket]);
 
   const handleSpeechCommand = useCallback((text: string) => {
     setIsLoading(true);
@@ -329,8 +410,6 @@ const Speech: React.FC = () => {
     }
 
     addToConversationHistory(`🗣️ You said: "${trimmed}"`);
-    
-    // Send to robot for processing
     sendWebSocketMessage('text_command', { text: trimmed.toLowerCase() });
   }, [addToConversationHistory, sendWebSocketMessage]);
 
@@ -415,7 +494,8 @@ const Speech: React.FC = () => {
 
   return (
     <div style={styles.container}>
-      <style>{`@keyframes pulse {0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}`}</style>
+      <style>{`@keyframes pulse {0%{opacity:1}50%{opacity:0.5}100%{opacity:1}}
+        @keyframes spin {0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}`}</style>
 
       <UserHeader />
 
@@ -430,10 +510,12 @@ const Speech: React.FC = () => {
             height: '8px',
             borderRadius: '50%',
             marginRight: '8px',
-            backgroundColor: wsRef.current?.readyState === WebSocket.OPEN ? '#48bb78' : '#e53e3e'
+            backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
+                            connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
           }}></div>
           <span>
-            {wsRef.current?.readyState === WebSocket.OPEN ? 'Connected' : 'Connecting...'}
+            {connectionStatus === 'connected' ? 'Connected' : 
+             connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
           </span>
         </div>
 
@@ -458,17 +540,7 @@ const Speech: React.FC = () => {
             </button>
           </div>
           
-          {showCamera && (
-            <div style={styles.cameraContainer}>
-              <img
-                ref={cameraRef}
-                alt="Robot Camera Feed"
-                style={styles.cameraFeed}
-                onError={() => console.warn('Camera image failed to load')}
-                onLoad={() => console.log('Camera image loaded')}
-              />
-            </div>
-          )}
+          <CameraFeed showCamera={showCamera} isConnected={connectionStatus === 'connected'} />
 
           <div style={styles.userInfo}>
             <span><strong>Current User:</strong> {status?.current_user || 'Unknown'}</span>
@@ -776,6 +848,17 @@ const styles = {
     fontSize: '0.8rem',
     fontWeight: '600'
   },
+  retryBtn: {
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    border: 'none',
+    cursor: 'pointer',
+    background: '#667eea',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    marginTop: '0.5rem'
+  },
   input: {
     flex: 1,
     padding: '0.75rem',
@@ -784,8 +867,13 @@ const styles = {
     fontSize: '1rem'
   },
   cameraContainer: {
+    position: 'relative' as const,
+    textAlign: 'center' as const,
     marginTop: '1rem',
-    textAlign: 'center' as const
+    minHeight: '300px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
   },
   cameraFeed: {
     maxWidth: '100%',
@@ -794,6 +882,33 @@ const styles = {
     border: '2px solid #e2e8f0',
     minHeight: '300px',
     backgroundColor: '#f7fafc'
+  },
+  loadingOverlay: {
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    textAlign: 'center' as const,
+    color: '#4a5568',
+    zIndex: 10
+  },
+  errorOverlay: {
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    textAlign: 'center' as const,
+    color: '#e53e3e',
+    zIndex: 10
+  },
+  spinner: {
+    width: '40px',
+    height: '40px',
+    border: '4px solid #f3f3f3',
+    borderTop: '4px solid #667eea',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
+    margin: '0 auto 1rem'
   },
   userInfo: {
     display: 'flex',

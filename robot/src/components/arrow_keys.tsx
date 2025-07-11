@@ -37,7 +37,6 @@ type WSMessage =
   | { type: 'pong' };
 
 const ArrowKeys: React.FC = () => {
-  const [ws, setWs] = useState<WebSocket | null>(null);
   const [response, setResponse] = useState<string>('');
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
@@ -48,27 +47,46 @@ const ArrowKeys: React.FC = () => {
   const [autoMode, setAutoMode] = useState(false);
   const [movementHistory, setMovementHistory] = useState<string[]>([]);
 
-  // Use refs to avoid stale closure issues
+  // Use refs to avoid stale closure issues and prevent infinite loops
   const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectCountRef = useRef(0);
+  const maxRetries = 5;
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, []);
 
-  // Memoized message handler to avoid stale closures
-  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+  // Stable functions that don't change
+  const addToMovementHistory = useCallback((message: string) => {
+    if (!mountedRef.current) return;
+    setMovementHistory(prev => [...prev.slice(-4), message]);
+  }, []);
+
+  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type, data }));
+    } else {
+      setResponse('WebSocket not connected');
+    }
+  }, []);
+
+  // Message handlers - these are stable and won't cause reconnections
+  const handleMessage = useCallback((event: MessageEvent) => {
     if (!mountedRef.current) return;
     
     try {
@@ -100,23 +118,23 @@ const ArrowKeys: React.FC = () => {
     } catch (error) {
       console.error('WebSocket message parse error:', error);
     }
-  }, []);
+  }, [addToMovementHistory]);
 
-  // Memoized connection handlers
-  const handleWebSocketOpen = useCallback(() => {
+  const handleOpen = useCallback(() => {
     if (!mountedRef.current) return;
     console.log('✅ Arrow Keys WebSocket connected');
     setConnectionStatus('connected');
     setResponse('Connected to enhanced robot');
+    reconnectCountRef.current = 0;
   }, []);
 
-  const handleWebSocketError = useCallback(() => {
+  const handleError = useCallback(() => {
     console.error('Arrow Keys WebSocket error');
     setConnectionStatus('disconnected');
     setResponse('WebSocket connection error');
   }, []);
 
-  const handleWebSocketClose = useCallback(() => {
+  const handleClose = useCallback(() => {
     if (!mountedRef.current) return;
     
     console.log('Arrow Keys WebSocket closed');
@@ -124,43 +142,56 @@ const ArrowKeys: React.FC = () => {
     setResponse('WebSocket disconnected - reconnecting...');
     wsRef.current = null;
     
-    reconnectTimerRef.current = setTimeout(() => {
-      if (mountedRef.current) {
-        // Trigger reconnection by updating state
-        setConnectionStatus('connecting');
-      }
-    }, 3000);
+    // Auto-reconnect with backoff
+    if (reconnectCountRef.current < maxRetries) {
+      reconnectCountRef.current++;
+      reconnectTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) {
+          initializeWebSocket();
+        }
+      }, 3000);
+    } else {
+      setResponse('Failed to reconnect after maximum attempts');
+    }
   }, []);
 
-  // Setup WebSocket connection with proper event handler management
-  useEffect(() => {
+  // Initialize WebSocket - this function is stable
+  const initializeWebSocket = useCallback(() => {
     if (!mountedRef.current) return;
     
+    // Close existing connection
+    if (wsRef.current) {
+      wsRef.current.removeEventListener('open', handleOpen);
+      wsRef.current.removeEventListener('message', handleMessage);
+      wsRef.current.removeEventListener('error', handleError);
+      wsRef.current.removeEventListener('close', handleClose);
+      wsRef.current.close();
+    }
+    
     setConnectionStatus('connecting');
-    const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-    wsRef.current = websocket;
+    
+    try {
+      const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = websocket;
 
-    // Attach event listeners
-    websocket.addEventListener('open', handleWebSocketOpen);
-    websocket.addEventListener('message', handleWebSocketMessage);
-    websocket.addEventListener('error', handleWebSocketError);
-    websocket.addEventListener('close', handleWebSocketClose);
+      // Attach event listeners
+      websocket.addEventListener('open', handleOpen);
+      websocket.addEventListener('message', handleMessage);
+      websocket.addEventListener('error', handleError);
+      websocket.addEventListener('close', handleClose);
+      
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error);
+      setConnectionStatus('disconnected');
+    }
+  }, [handleOpen, handleMessage, handleError, handleClose]);
 
-    return () => {
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-      if (websocket) {
-        websocket.removeEventListener('open', handleWebSocketOpen);
-        websocket.removeEventListener('message', handleWebSocketMessage);
-        websocket.removeEventListener('error', handleWebSocketError);
-        websocket.removeEventListener('close', handleWebSocketClose);
-        websocket.close();
-      }
-    };
-  }, [connectionStatus, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
+  // Initialize WebSocket only once
+  useEffect(() => {
+    initializeWebSocket();
+  }, [initializeWebSocket]);
 
-  // Camera stream setup
+  // Camera stream setup - separate effect
   useEffect(() => {
     if (showCamera && cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
@@ -172,28 +203,16 @@ const ArrowKeys: React.FC = () => {
     }
   }, [showCamera, connectionStatus]);
 
-  const addToMovementHistory = (message: string) => {
-    if (!mountedRef.current) return;
-    setMovementHistory(prev => [...prev.slice(-4), message]); // Keep last 5 movements
-  };
-
-  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type, data }));
-    } else {
-      setResponse('WebSocket not connected');
-    }
-  }, []);
-
+  // Action functions
   const sendDirection = useCallback((direction: string) => {
     sendWebSocketMessage('direction_command', { direction });
     addToMovementHistory(`▶️ Command sent: ${direction}`);
-  }, [sendWebSocketMessage]);
+  }, [sendWebSocketMessage, addToMovementHistory]);
 
   const sendStop = useCallback(() => {
     sendWebSocketMessage('stop_command');
     addToMovementHistory('🛑 Stop command sent');
-  }, [sendWebSocketMessage]);
+  }, [sendWebSocketMessage, addToMovementHistory]);
 
   const sendSpeech = useCallback(() => {
     if (speechText.trim()) {
@@ -217,6 +236,7 @@ const ArrowKeys: React.FC = () => {
     setMovementHistory([]);
   }, []);
 
+  // UI handlers
   const handleMouseEnter = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.currentTarget.style.transform = 'translateY(-4px) scale(1.05)';
     e.currentTarget.style.boxShadow = '0 16px 32px rgba(102, 126, 234, 0.4)';
