@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UserHeader } from './UserContext';
+import { UserHeader } from './UserHeader';
 
 interface EnhancedRobotStatus {
   status: string;
