@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback} from 'react';
 import { UserHeader } from './UserHeader';
 
 interface EnhancedRobotStatus {
@@ -48,101 +48,117 @@ const ArrowKeys: React.FC = () => {
   const [autoMode, setAutoMode] = useState(false);
   const [movementHistory, setMovementHistory] = useState<string[]>([]);
 
+  // Use refs to avoid stale closure issues
+  const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
   }, []);
 
-  // Setup WebSocket connection
-  useEffect(() => {
-    let reconnectTimer: number;
+  // Memoized message handler to avoid stale closures
+  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+    if (!mountedRef.current) return;
     
-    const connect = () => {
-      if (!mountedRef.current) return;
+    try {
+      const data: WSMessage = JSON.parse(event.data);
       
-      setConnectionStatus('connecting');
-      const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-      setWs(websocket);
+      switch (data.type) {
+        case 'status_update':
+          setStatus(data.data);
+          break;
+        case 'direction_executed':
+          const dirMsg = `Direction ${data.data.direction} ${data.data.success ? 'succeeded' : 'failed'}`;
+          setResponse(dirMsg);
+          addToMovementHistory(dirMsg);
+          break;
+        case 'robot_stopped':
+          setResponse(data.data.message);
+          addToMovementHistory('🛑 Robot stopped');
+          break;
+        case 'speech_output':
+          setResponse(`🤖 Robot spoke: "${data.data.text}"`);
+          break;
+        case 'obstacle_reset':
+          setResponse(data.data.message);
+          break;
+        case 'error':
+          setResponse(`Error: ${data.data.message}`);
+          break;
+      }
+    } catch (error) {
+      console.error('WebSocket message parse error:', error);
+    }
+  }, []);
 
-      websocket.onopen = () => {
-        if (!mountedRef.current) return;
-        console.log('WebSocket connected');
-        setConnectionStatus('connected');
-        setResponse('Connected to enhanced robot');
-      };
+  // Memoized connection handlers
+  const handleWebSocketOpen = useCallback(() => {
+    if (!mountedRef.current) return;
+    console.log('✅ Arrow Keys WebSocket connected');
+    setConnectionStatus('connected');
+    setResponse('Connected to enhanced robot');
+  }, []);
 
-      websocket.onmessage = (event) => {
-        if (!mountedRef.current) return;
-        
-        try {
-          const data: WSMessage = JSON.parse(event.data);
-          
-          switch (data.type) {
-            case 'status_update':
-              setStatus(data.data);
-              break;
-            case 'direction_executed':
-              const dirMsg = `Direction ${data.data.direction} ${data.data.success ? 'succeeded' : 'failed'}`;
-              setResponse(dirMsg);
-              addToMovementHistory(dirMsg);
-              break;
-            case 'robot_stopped':
-              setResponse(data.data.message);
-              addToMovementHistory('🛑 Robot stopped');
-              break;
-            case 'speech_output':
-              setResponse(`🤖 Robot spoke: "${data.data.text}"`);
-              break;
-            case 'obstacle_reset':
-              setResponse(data.data.message);
-              break;
-            case 'error':
-              setResponse(`Error: ${data.data.message}`);
-              break;
-          }
-        } catch (error) {
-          console.error('WebSocket message parse error:', error);
-        }
-      };
+  const handleWebSocketError = useCallback(() => {
+    console.error('Arrow Keys WebSocket error');
+    setConnectionStatus('disconnected');
+    setResponse('WebSocket connection error');
+  }, []);
 
-      websocket.onerror = () => {
-        console.error('WebSocket error');
-        setConnectionStatus('disconnected');
-        setResponse('WebSocket connection error');
-      };
+  const handleWebSocketClose = useCallback(() => {
+    if (!mountedRef.current) return;
+    
+    console.log('Arrow Keys WebSocket closed');
+    setConnectionStatus('disconnected');
+    setResponse('WebSocket disconnected - reconnecting...');
+    wsRef.current = null;
+    
+    reconnectTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        // Trigger reconnection by updating state
+        setConnectionStatus('connecting');
+      }
+    }, 3000);
+  }, []);
 
-      websocket.onclose = () => {
-        if (!mountedRef.current) return;
-        
-        console.log('WebSocket closed');
-        setConnectionStatus('disconnected');
-        setResponse('WebSocket disconnected - reconnecting...');
-        setWs(null);
-        
-        reconnectTimer = window.setTimeout(() => {
-          if (mountedRef.current) {
-            connect();
-          }
-        }, 3000);
-      };
-    };
+  // Setup WebSocket connection with proper event handler management
+  useEffect(() => {
+    if (!mountedRef.current) return;
+    
+    setConnectionStatus('connecting');
+    const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    wsRef.current = websocket;
 
-    connect();
+    // Attach event listeners
+    websocket.addEventListener('open', handleWebSocketOpen);
+    websocket.addEventListener('message', handleWebSocketMessage);
+    websocket.addEventListener('error', handleWebSocketError);
+    websocket.addEventListener('close', handleWebSocketClose);
 
     return () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
       }
-      if (ws) {
-        ws.close();
+      if (websocket) {
+        websocket.removeEventListener('open', handleWebSocketOpen);
+        websocket.removeEventListener('message', handleWebSocketMessage);
+        websocket.removeEventListener('error', handleWebSocketError);
+        websocket.removeEventListener('close', handleWebSocketClose);
+        websocket.close();
       }
     };
-  }, []);
+  }, [connectionStatus, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
 
   // Camera stream setup
   useEffect(() => {
@@ -161,45 +177,45 @@ const ArrowKeys: React.FC = () => {
     setMovementHistory(prev => [...prev.slice(-4), message]); // Keep last 5 movements
   };
 
-  const sendWebSocketMessage = (type: string, data: any = {}) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type, data }));
+  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type, data }));
     } else {
       setResponse('WebSocket not connected');
     }
-  };
+  }, []);
 
-  const sendDirection = (direction: string) => {
+  const sendDirection = useCallback((direction: string) => {
     sendWebSocketMessage('direction_command', { direction });
     addToMovementHistory(`▶️ Command sent: ${direction}`);
-  };
+  }, [sendWebSocketMessage]);
 
-  const sendStop = () => {
+  const sendStop = useCallback(() => {
     sendWebSocketMessage('stop_command');
     addToMovementHistory('🛑 Stop command sent');
-  };
+  }, [sendWebSocketMessage]);
 
-  const sendSpeech = () => {
+  const sendSpeech = useCallback(() => {
     if (speechText.trim()) {
       sendWebSocketMessage('speech_command', { text: speechText.trim() });
       setSpeechText('');
     }
-  };
+  }, [speechText, sendWebSocketMessage]);
 
-  const toggleAutoMode = () => {
+  const toggleAutoMode = useCallback(() => {
     const newMode = !autoMode;
     setAutoMode(newMode);
     sendWebSocketMessage('set_interaction_mode', { mode: newMode ? 'auto' : 'manual' });
-  };
+  }, [autoMode, sendWebSocketMessage]);
 
-  const resetObstacle = () => {
+  const resetObstacle = useCallback(() => {
     sendWebSocketMessage('reset_obstacle');
     setResponse('Obstacle reset requested...');
-  };
+  }, [sendWebSocketMessage]);
 
-  const clearHistory = () => {
+  const clearHistory = useCallback(() => {
     setMovementHistory([]);
-  };
+  }, []);
 
   const handleMouseEnter = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.currentTarget.style.transform = 'translateY(-4px) scale(1.05)';
@@ -235,6 +251,7 @@ const ArrowKeys: React.FC = () => {
         <h2 style={styles.title}>Enhanced Arrow Key Control</h2>
         <p style={styles.subtitle}>Direct robot control with camera and speech</p>
         
+        {/* Connection Status */}
         <div style={styles.connectionIndicator}>
           <div style={{
             ...styles.statusDot,

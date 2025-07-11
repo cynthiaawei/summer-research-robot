@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { UserHeader } from './UserHeader';
 
 interface EnhancedRobotStatus {
@@ -61,14 +61,26 @@ const Speech: React.FC = () => {
   const [showCamera, setShowCamera] = useState(false);
   const [autoMode, setAutoMode] = useState(false);
 
-  const socketRef = useRef<WebSocket | null>(null);
+  // Use refs to avoid stale closure issues
+  const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
     };
   }, []);
 
@@ -127,162 +139,187 @@ const Speech: React.FC = () => {
     }
   }, [finalTranscript]);
 
+  const addToConversationHistory = useCallback((message: string) => {
+    if (!mountedRef.current) return;
+    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
+  }, []);
+
+  // Memoized message handler to avoid stale closures
+  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+    if (!mountedRef.current) return;
+    
+    try {
+      const msg: WSMessage = JSON.parse(event.data);
+      
+      switch (msg.type) {
+        case 'status_update':
+          setStatus(msg.data);
+          break;
+        case 'speech_output':
+          const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
+          setResponse({ message: speechMsg, isError: !msg.data.success });
+          addToConversationHistory(speechMsg);
+          setIsLoading(false);
+          break;
+        case 'speech_input':
+          if (msg.data.success && msg.data.text) {
+            const heardMsg = `👂 Heard: "${msg.data.text}"`;
+            setResponse({ message: heardMsg, isError: false });
+            addToConversationHistory(heardMsg);
+            // Auto-process the speech command
+            handleWebSocketSpeechCommand(msg.data.text);
+          } else {
+            setResponse({ message: '❌ No speech detected', isError: true });
+          }
+          setIsLoading(false);
+          break;
+        case 'listening_started':
+          setResponse({ message: `🎤 Listening for ${msg.data.timeout} seconds...`, isError: false });
+          break;
+        case 'user_recognized':
+          if (msg.data.success && msg.data.user) {
+            const userMsg = `👤 User recognized: ${msg.data.user}`;
+            setResponse({ message: userMsg, isError: false });
+            addToConversationHistory(userMsg);
+          } else {
+            setResponse({ message: '❓ No user recognized', isError: true });
+          }
+          break;
+        case 'user_registered':
+          const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
+          setResponse({ message: regMsg, isError: !msg.data.success });
+          addToConversationHistory(regMsg);
+          if (msg.data.success) {
+            setUserRegistrationName('');
+          }
+          break;
+        case 'conversation_response':
+          const convMsg = `💬 Robot: ${msg.data.response}`;
+          setResponse({ message: convMsg, isError: false });
+          addToConversationHistory(convMsg);
+          setIsLoading(false);
+          break;
+        case 'text_command_result':
+          setResponse({ message: msg.data.message, isError: !msg.data.success });
+          addToConversationHistory(`📋 Command: ${msg.data.message}`);
+          setIsLoading(false);
+          break;
+        case 'robot_stopped':
+          setResponse({ message: msg.data.message, isError: false });
+          setIsLoading(false);
+          break;
+        case 'obstacle_reset':
+          setResponse({ message: msg.data.message, isError: !msg.data.success });
+          setIsLoading(false);
+          break;
+        case 'error':
+          setResponse({ message: msg.data.message, isError: true });
+          setIsLoading(false);
+          break;
+      }
+    } catch (error) {
+      setResponse({ message: 'WS parse error', isError: true });
+      setIsLoading(false);
+    }
+  }, [addToConversationHistory]);
+
+  // Memoized connection handlers
+  const handleWebSocketOpen = useCallback(() => {
+    if (!mountedRef.current) return;
+    console.log('✅ Speech WebSocket connected');
+    setResponse({ message: 'Connected to enhanced robot', isError: false });
+    setRetryCount(0);
+
+    // Setup ping interval
+    pingIntervalRef.current = setInterval(() => {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 30000);
+  }, []);
+
+  const handleWebSocketError = useCallback(() => {
+    console.error('Speech WebSocket error');
+    setResponse({ message: 'WebSocket error', isError: true });
+    setIsLoading(false);
+  }, []);
+
+  const handleWebSocketClose = useCallback(() => {
+    if (!mountedRef.current) return;
+    
+    console.warn('Speech WebSocket closed, retrying...');
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+    }
+    wsRef.current = null;
+    
+    reconnectTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) {
+        setRetryCount(prev => prev + 1);
+      }
+    }, 5000);
+  }, []);
+
   // WebSocket connection
   useEffect(() => {
-    let pingId: number;
-    let reconnectTimer: number;
+    if (retryCount >= maxRetries) {
+      setResponse({ message: 'Max WS retries reached', isError: true });
+      return;
+    }
 
-    const connect = () => {
-      if (!mountedRef.current) return;
-      
-      if (retryCount >= maxRetries) {
-        setResponse({ message: 'Max WS retries reached', isError: true });
-        return;
-      }
+    if (!mountedRef.current) return;
+    
+    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    wsRef.current = ws;
 
-      const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-      socketRef.current = ws;
+    // Attach event listeners
+    ws.addEventListener('open', handleWebSocketOpen);
+    ws.addEventListener('message', handleWebSocketMessage);
+    ws.addEventListener('error', handleWebSocketError);
+    ws.addEventListener('close', handleWebSocketClose);
 
-      ws.onopen = () => {
-        if (!mountedRef.current) return;
-        console.log('WebSocket connected');
-        setResponse({ message: 'Connected to enhanced robot', isError: false });
-        setRetryCount(0);
-
-        pingId = window.setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 30000);
-      };
-
-      ws.onmessage = (event) => {
-        if (!mountedRef.current) return;
-        
-        let msg: WSMessage;
-        try {
-          msg = JSON.parse(event.data);
-        } catch {
-          setResponse({ message: 'WS parse error', isError: true });
-          setIsLoading(false);
-          return;
-        }
-
-        switch (msg.type) {
-          case 'status_update':
-            setStatus(msg.data);
-            break;
-          case 'speech_output':
-            const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
-            setResponse({ message: speechMsg, isError: !msg.data.success });
-            addToConversationHistory(speechMsg);
-            setIsLoading(false);
-            break;
-          case 'speech_input':
-            if (msg.data.success && msg.data.text) {
-              const heardMsg = `👂 Heard: "${msg.data.text}"`;
-              setResponse({ message: heardMsg, isError: false });
-              addToConversationHistory(heardMsg);
-              // Auto-process the speech command
-              handleWebSocketSpeechCommand(msg.data.text);
-            } else {
-              setResponse({ message: '❌ No speech detected', isError: true });
-            }
-            setIsLoading(false);
-            break;
-          case 'listening_started':
-            setResponse({ message: `🎤 Listening for ${msg.data.timeout} seconds...`, isError: false });
-            break;
-          case 'user_recognized':
-            if (msg.data.success && msg.data.user) {
-              const userMsg = `👤 User recognized: ${msg.data.user}`;
-              setResponse({ message: userMsg, isError: false });
-              addToConversationHistory(userMsg);
-            } else {
-              setResponse({ message: '❓ No user recognized', isError: true });
-            }
-            break;
-          case 'user_registered':
-            const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
-            setResponse({ message: regMsg, isError: !msg.data.success });
-            addToConversationHistory(regMsg);
-            if (msg.data.success) {
-              setUserRegistrationName('');
-            }
-            break;
-          case 'conversation_response':
-            const convMsg = `💬 Robot: ${msg.data.response}`;
-            setResponse({ message: convMsg, isError: false });
-            addToConversationHistory(convMsg);
-            setIsLoading(false);
-            break;
-          case 'text_command_result':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
-            addToConversationHistory(`📋 Command: ${msg.data.message}`);
-            setIsLoading(false);
-            break;
-          case 'robot_stopped':
-            setResponse({ message: msg.data.message, isError: false });
-            setIsLoading(false);
-            break;
-          case 'obstacle_reset':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
-            setIsLoading(false);
-            break;
-          case 'error':
-            setResponse({ message: msg.data.message, isError: true });
-            setIsLoading(false);
-            break;
-        }
-      };
-
-      ws.onerror = () => {
-        console.error('WebSocket error');
-        setResponse({ message: 'WebSocket error', isError: true });
-        setIsLoading(false);
-      };
-
-      ws.onclose = () => {
-        if (!mountedRef.current) return;
-        
-        console.warn('WebSocket closed, retrying...');
-        clearInterval(pingId);
-        reconnectTimer = window.setTimeout(() => {
-          setRetryCount(c => c + 1);
-        }, 5000);
-      };
-    };
-
-    connect();
     return () => {
-      clearInterval(pingId);
-      clearTimeout(reconnectTimer);
-      socketRef.current?.close();
+      if (pingIntervalRef.current) {
+        clearInterval(pingIntervalRef.current);
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+      if (ws) {
+        ws.removeEventListener('open', handleWebSocketOpen);
+        ws.removeEventListener('message', handleWebSocketMessage);
+        ws.removeEventListener('error', handleWebSocketError);
+        ws.removeEventListener('close', handleWebSocketClose);
+        ws.close();
+      }
     };
-  }, [retryCount]);
+  }, [retryCount, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
 
   // Camera stream setup
   useEffect(() => {
     if (showCamera && cameraRef.current) {
       const img = cameraRef.current;
       img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+      
+      img.onerror = () => {
+        console.warn('Camera stream not available');
+      };
+      
+      img.onload = () => {
+        console.log('✅ Camera stream loaded successfully');
+      };
     }
   }, [showCamera]);
 
-  const addToConversationHistory = (message: string) => {
-    if (!mountedRef.current) return;
-    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
-  };
-
-  const sendWebSocketMessage = (type: string, data: any = {}) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type, data }));
+  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type, data }));
     } else {
       setResponse({ message: 'WebSocket not connected', isError: true });
     }
-  };
+  }, []);
 
-  const handleSpeechCommand = (text: string) => {
+  const handleSpeechCommand = useCallback((text: string) => {
     setIsLoading(true);
     const trimmed = text.trim();
     if (!trimmed) {
@@ -295,67 +332,67 @@ const Speech: React.FC = () => {
     
     // Send to robot for processing
     sendWebSocketMessage('text_command', { text: trimmed.toLowerCase() });
-  };
+  }, [addToConversationHistory, sendWebSocketMessage]);
 
-  const handleWebSocketSpeechCommand = (text: string) => {
+  const handleWebSocketSpeechCommand = useCallback((text: string) => {
     if (text) {
       addToConversationHistory(`🗣️ You said: "${text}"`);
       sendWebSocketMessage('text_command', { text: text.toLowerCase() });
     }
-  };
+  }, [addToConversationHistory, sendWebSocketMessage]);
 
-  const startListening = () => {
+  const startListening = useCallback(() => {
     if (recognition && !listening) {
       setTranscript('');
       setFinalTranscript('');
       recognition.start();
     }
-  };
+  }, [recognition, listening]);
 
-  const startWebSocketListening = () => {
+  const startWebSocketListening = useCallback(() => {
     setIsLoading(true);
     sendWebSocketMessage('listen_command', { timeout: 5 });
-  };
+  }, [sendWebSocketMessage]);
 
-  const stopListening = () => {
+  const stopListening = useCallback(() => {
     if (recognition && listening) {
       recognition.stop();
     }
-  };
+  }, [recognition, listening]);
 
-  const sendSpeech = () => {
+  const sendSpeech = useCallback(() => {
     if (speechText.trim()) {
       setIsLoading(true);
       addToConversationHistory(`📢 Making robot say: "${speechText}"`);
       sendWebSocketMessage('speech_command', { text: speechText.trim() });
       setSpeechText('');
     }
-  };
+  }, [speechText, addToConversationHistory, sendWebSocketMessage]);
 
-  const recognizeUser = () => {
+  const recognizeUser = useCallback(() => {
     sendWebSocketMessage('recognize_user', { mode: 'speech' });
-  };
+  }, [sendWebSocketMessage]);
 
-  const registerUser = () => {
+  const registerUser = useCallback(() => {
     if (userRegistrationName.trim()) {
       sendWebSocketMessage('register_user', { name: userRegistrationName.trim() });
     }
-  };
+  }, [userRegistrationName, sendWebSocketMessage]);
 
-  const startConversation = () => {
+  const startConversation = useCallback(() => {
     setIsLoading(true);
     sendWebSocketMessage('conversation_mode', { mode: 'speech' });
-  };
+  }, [sendWebSocketMessage]);
 
-  const toggleAutoMode = () => {
+  const toggleAutoMode = useCallback(() => {
     const newMode = !autoMode;
     setAutoMode(newMode);
     sendWebSocketMessage('set_interaction_mode', { mode: newMode ? 'auto' : 'speech' });
-  };
+  }, [autoMode, sendWebSocketMessage]);
 
-  const clearHistory = () => {
+  const clearHistory = useCallback(() => {
     setConversationHistory([]);
-  };
+  }, []);
 
   if (!browserSupported) {
     return (
@@ -386,6 +423,20 @@ const Speech: React.FC = () => {
         <h2 style={styles.title}>Enhanced Voice Control</h2>
         <p style={styles.subtitle}>Advanced speech interaction with face recognition</p>
 
+        {/* Connection Status */}
+        <div style={styles.connectionIndicator}>
+          <div style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            marginRight: '8px',
+            backgroundColor: wsRef.current?.readyState === WebSocket.OPEN ? '#48bb78' : '#e53e3e'
+          }}></div>
+          <span>
+            {wsRef.current?.readyState === WebSocket.OPEN ? 'Connected' : 'Connecting...'}
+          </span>
+        </div>
+
         {/* Camera Controls */}
         <div style={styles.section}>
           <h3 style={styles.sectionTitle}>👁️ Camera & Recognition</h3>
@@ -413,6 +464,8 @@ const Speech: React.FC = () => {
                 ref={cameraRef}
                 alt="Robot Camera Feed"
                 style={styles.cameraFeed}
+                onError={() => console.warn('Camera image failed to load')}
+                onLoad={() => console.log('Camera image loaded')}
               />
             </div>
           )}
@@ -636,6 +689,13 @@ const styles = {
     marginBottom: '2rem',
     fontSize: '1.1rem'
   },
+  connectionIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '1rem',
+    fontSize: '0.9rem'
+  },
   section: {
     marginBottom: '2rem',
     padding: '1rem',
@@ -731,7 +791,9 @@ const styles = {
     maxWidth: '100%',
     height: 'auto',
     borderRadius: '12px',
-    border: '2px solid #e2e8f0'
+    border: '2px solid #e2e8f0',
+    minHeight: '300px',
+    backgroundColor: '#f7fafc'
   },
   userInfo: {
     display: 'flex',

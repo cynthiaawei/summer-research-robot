@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios, { isAxiosError } from 'axios';
 import { UserHeader } from './UserHeader';
 
@@ -77,126 +77,128 @@ const TextButton: React.FC = () => {
     };
   }, []);
 
+  const addToConversationHistory = useCallback((message: string) => {
+    if (!mountedRef.current) return;
+    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
+  }, []);
+
+  // Memoized WebSocket handlers
+  const handleWebSocketOpen = useCallback(() => {
+    if (!mountedRef.current) return;
+    console.log('✅ Text WebSocket connected');
+    setResponse({ message: 'Connected to enhanced robot', isError: false });
+    setRetryCount(0);
+  }, []);
+
+  const handleWebSocketError = useCallback(() => {
+    console.error('Text WS error');
+    setResponse({ message: 'WebSocket error', isError: true });
+    setIsLoading(false);
+  }, []);
+
+  const handleWebSocketClose = useCallback(() => {
+    if (!mountedRef.current) return;
+    console.warn('Text WS closed — reconnecting');
+    socketRef.current = null;
+    setTimeout(() => {
+      setRetryCount(c => c + 1);
+    }, 5000);
+  }, []);
+
+  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+    if (!mountedRef.current) return;
+    
+    let msg: WSMessage;
+    try {
+      msg = JSON.parse(event.data);
+    } catch {
+      setResponse({ message: 'WS parse error', isError: true });
+      setIsLoading(false);
+      return;
+    }
+
+    switch (msg.type) {
+      case 'status_update':
+        setStatus(msg.data);
+        break;
+      case 'text_command_processed':
+      case 'text_command_result':
+        setResponse({ message: msg.data.message, isError: !msg.data.success });
+        addToConversationHistory(`📋 Response: ${msg.data.message}`);
+        break;
+      case 'speech_output':
+        const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
+        setResponse({ message: speechMsg, isError: !msg.data.success });
+        addToConversationHistory(speechMsg);
+        break;
+      case 'user_recognized':
+        if (msg.data.success && msg.data.user) {
+          const userMsg = `👤 User recognized: ${msg.data.user}`;
+          setResponse({ message: userMsg, isError: false });
+          addToConversationHistory(userMsg);
+        } else {
+          setResponse({ message: '❓ No user recognized', isError: true });
+        }
+        break;
+      case 'user_registered':
+        const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
+        setResponse({ message: regMsg, isError: !msg.data.success });
+        addToConversationHistory(regMsg);
+        if (msg.data.success) {
+          setUserRegistrationName('');
+        }
+        break;
+      case 'conversation_response':
+        const convMsg = `💬 Robot: ${msg.data.response}`;
+        setResponse({ message: convMsg, isError: false });
+        addToConversationHistory(convMsg);
+        break;
+      case 'direction_executed':
+        setResponse({
+          message: `Direction ${msg.data.direction} ${msg.data.success ? 'succeeded' : 'failed'}`,
+          isError: !msg.data.success
+        });
+        break;
+      case 'robot_stopped':
+        setResponse({ message: msg.data.message, isError: false });
+        break;
+      case 'obstacle_reset':
+        setResponse({ message: msg.data.message, isError: !msg.data.success });
+        break;
+      case 'error':
+        setResponse({ message: msg.data.message, isError: true });
+        break;
+    }
+    setIsLoading(false);
+  }, [addToConversationHistory]);
+
   useEffect(() => {
-    let pingId: number;
-    let reconnectTimer: number;
+    if (retryCount >= maxRetries) {
+      setResponse({ message: 'Max WS retries reached', isError: true });
+      return;
+    }
 
-    const connect = () => {
-      if (!mountedRef.current) return;
-      
-      if (retryCount >= maxRetries) {
-        setResponse({ message: 'Max WS retries reached', isError: true });
-        return;
-      }
+    if (!mountedRef.current) return;
 
-      const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-      socketRef.current = ws;
+    const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+    socketRef.current = ws;
 
-      ws.onopen = () => {
-        if (!mountedRef.current) return;
-        console.log('WS connected');
-        setResponse({ message: 'Connected to enhanced robot', isError: false });
-        setRetryCount(0);
+    // Attach event listeners
+    ws.addEventListener('open', handleWebSocketOpen);
+    ws.addEventListener('message', handleWebSocketMessage);
+    ws.addEventListener('error', handleWebSocketError);
+    ws.addEventListener('close', handleWebSocketClose);
 
-        pingId = window.setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-          }
-        }, 30000);
-      };
-
-      ws.onmessage = ({ data }) => {
-        if (!mountedRef.current) return;
-        
-        let msg: WSMessage;
-        try {
-          msg = JSON.parse(data);
-        } catch {
-          setResponse({ message: 'WS parse error', isError: true });
-          setIsLoading(false);
-          return;
-        }
-
-        switch (msg.type) {
-          case 'status_update':
-            setStatus(msg.data);
-            break;
-          case 'text_command_processed':
-          case 'text_command_result':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
-            addToConversationHistory(`📋 Response: ${msg.data.message}`);
-            break;
-          case 'speech_output':
-            const speechMsg = `🤖 Robot spoke: "${msg.data.text}"`;
-            setResponse({ message: speechMsg, isError: !msg.data.success });
-            addToConversationHistory(speechMsg);
-            break;
-          case 'user_recognized':
-            if (msg.data.success && msg.data.user) {
-              const userMsg = `👤 User recognized: ${msg.data.user}`;
-              setResponse({ message: userMsg, isError: false });
-              addToConversationHistory(userMsg);
-            } else {
-              setResponse({ message: '❓ No user recognized', isError: true });
-            }
-            break;
-          case 'user_registered':
-            const regMsg = `📝 User registration: ${msg.data.name} ${msg.data.success ? 'succeeded' : 'failed'}`;
-            setResponse({ message: regMsg, isError: !msg.data.success });
-            addToConversationHistory(regMsg);
-            if (msg.data.success) {
-              setUserRegistrationName('');
-            }
-            break;
-          case 'conversation_response':
-            const convMsg = `💬 Robot: ${msg.data.response}`;
-            setResponse({ message: convMsg, isError: false });
-            addToConversationHistory(convMsg);
-            break;
-          case 'direction_executed':
-            setResponse({
-              message: `Direction ${msg.data.direction} ${msg.data.success ? 'succeeded' : 'failed'}`,
-              isError: !msg.data.success
-            });
-            break;
-          case 'robot_stopped':
-            setResponse({ message: msg.data.message, isError: false });
-            break;
-          case 'obstacle_reset':
-            setResponse({ message: msg.data.message, isError: !msg.data.success });
-            break;
-          case 'error':
-            setResponse({ message: msg.data.message, isError: true });
-            break;
-        }
-
-        setIsLoading(false);
-      };
-
-      ws.onerror = () => {
-        console.error('WS error');
-        setResponse({ message: 'WebSocket error', isError: true });
-        setIsLoading(false);
-      };
-
-      ws.onclose = () => {
-        if (!mountedRef.current) return;
-        
-        console.warn('WS closed — reconnecting');
-        clearInterval(pingId);
-        reconnectTimer = window.setTimeout(() => {
-          setRetryCount(c => c + 1);
-        }, 5000);
-      };
-    };
-
-    connect();
     return () => {
-      clearInterval(pingId);
-      clearTimeout(reconnectTimer);
-      socketRef.current?.close();
+      if (ws) {
+        ws.removeEventListener('open', handleWebSocketOpen);
+        ws.removeEventListener('message', handleWebSocketMessage);
+        ws.removeEventListener('error', handleWebSocketError);
+        ws.removeEventListener('close', handleWebSocketClose);
+        ws.close();
+      }
     };
-  }, [retryCount]);
+  }, [retryCount, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
 
   // Camera stream setup
   useEffect(() => {
@@ -206,18 +208,13 @@ const TextButton: React.FC = () => {
     }
   }, [showCamera]);
 
-  const addToConversationHistory = (message: string) => {
-    if (!mountedRef.current) return;
-    setConversationHistory(prev => [...prev.slice(-9), message]); // Keep last 10 messages
-  };
-
-  const sendWebSocketMessage = (type: string, data: any = {}) => {
+  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       socketRef.current.send(JSON.stringify({ type, data }));
     } else {
       setResponse({ message: 'WebSocket not connected', isError: true });
     }
-  };
+  }, []);
 
   const sendTextCommandViaHTTP = async (cmd: string) => {
     try {
@@ -229,13 +226,17 @@ const TextButton: React.FC = () => {
       addToConversationHistory(`📋 HTTP Response: ${res.data.message}`);
     } catch (err) {
       let msg = 'Error sending command';
+
       if (isAxiosError(err)) {
-        const data = err.response?.data as { detail?: string };
-        msg = data.detail ?? err.message;
+        const detail = (err.response?.data as { detail?: string })?.detail;
+        msg = detail ?? err.message;
+      } else if (err instanceof Error) {
+        msg = err.message;
+      } else {
+        msg = String(err);
       }
+
       setResponse({ message: msg, isError: true });
-    } finally {
-      setIsLoading(false);
     }
   };
 

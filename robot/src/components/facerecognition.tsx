@@ -31,7 +31,7 @@ const FaceRecognitionGate: React.FC = () => {
   const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
-  const reconnectTimerRef = useRef<number>();
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -124,7 +124,7 @@ const FaceRecognitionGate: React.FC = () => {
     setResponse('Disconnected - reconnecting...');
     wsRef.current = null;
     
-    reconnectTimerRef.current = window.setTimeout(() => {
+    reconnectTimerRef.current = setTimeout(() => {
       if (mountedRef.current) {
         setRetryCount(prev => prev + 1);
       }
