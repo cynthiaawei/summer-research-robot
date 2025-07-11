@@ -1,33 +1,39 @@
+"""
+app.py - Simplified FastAPI application for your robot system
+This integrates with your existing face_helper.py, hand.py, and movement_RGB.py modules
+"""
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import asyncio
 import json
 import logging
-import threading
-import time
 import os
 from typing import Dict, List, Optional
 import uvicorn
+import time
 
-# Import your robot control functions
-from robot_movement import (
-    RobotController,
-    process_immediate_command,
-    process_user_input,
-    listen,
-    speak
-)
+# Import the unified robot movement module
+try:
+    import robot_movement
+    ROBOT_AVAILABLE = True
+except ImportError as e:
+    ROBOT_AVAILABLE = False
+    logging.error(f"Robot movement module not available: {e}")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Robot Control API", description="Web interface for omni-wheel robot control")
+app = FastAPI(
+    title="Robot Control API", 
+    description="Web interface for omni-wheel robot with face recognition and hand detection"
+)
 
-# Enable CORS for frontend
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -44,53 +50,39 @@ class Command(BaseModel):
 class TextCommand(BaseModel):
     text: str
 
-class DirectionCommand(BaseModel):
-    direction: str
+class SpeechCommand(BaseModel):
+    text: str
 
-class RobotStatus(BaseModel):
+class UserRegistration(BaseModel):
+    name: str
+
+class RobotStatusResponse(BaseModel):
     status: str
     message: str
-    obstacle_detected: bool
+    current_user: str
+    hand_gesture: str
+    camera_active: bool
+    face_recognition_available: bool
+    speech_recognition_available: bool
     current_speeds: Dict[str, int]
-
-# Global state
-robot_controller = None
-connected_clients: List[WebSocket] = []
-robot_status = {
-    "status": "idle",
-    "message": "Robot ready",
-    "obstacle_detected": False,
-    "current_speeds": {"motor1": 0, "motor2": 0, "motor3": 0}
-}
-
-# Initialize robot controller
-try:
-    robot_controller = RobotController()
-    logger.info("Robot controller initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize robot controller: {e}")
-    robot_controller = None
+    face_recognition_attempts: int
+    awaiting_registration: bool
 
 # WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
+        self.last_status = None
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
-        logger.info(f"Client connected. Total connections: {len(self.active_connections)}")
+        logger.info(f"Client connected. Total: {len(self.active_connections)}")
 
-    def disconnect(self, websocket: WebSocket):
+    async def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
-        logger.info(f"Client disconnected. Total connections: {len(self.active_connections)}")
-
-    async def send_personal_message(self, message: str, websocket: WebSocket):
-        try:
-            await websocket.send_text(message)
-        except Exception as e:
-            logger.error(f"Error sending personal message: {e}")
+        logger.info(f"Client disconnected. Total: {len(self.active_connections)}")
 
     async def broadcast(self, message: str):
         disconnected = []
@@ -98,230 +90,154 @@ class ConnectionManager:
             try:
                 await connection.send_text(message)
             except Exception as e:
-                logger.error(f"Error broadcasting message: {e}")
+                logger.error(f"Error broadcasting: {e}")
                 disconnected.append(connection)
         
         for connection in disconnected:
-            self.disconnect(connection)
+            await self.disconnect(connection)
 
 manager = ConnectionManager()
 
-# Status update broadcaster
+# Status broadcaster
 async def broadcast_status():
     """Broadcast robot status to all connected clients"""
     while True:
         try:
-            if robot_controller:
-                robot_status.update({
-                    "status": robot_controller.get_status(),
-                    "obstacle_detected": robot_controller.obstacle_detected,
-                    "current_speeds": robot_controller.get_current_speeds()
-                })
+            if len(manager.active_connections) > 0 and ROBOT_AVAILABLE:
+                current_status = robot_movement.get_status()
+                
+                if current_status != manager.last_status:
+                    await manager.broadcast(json.dumps({
+                        "type": "status_update",
+                        "data": current_status
+                    }))
+                    manager.last_status = current_status.copy()
             
-            await manager.broadcast(json.dumps({
-                "type": "status_update",
-                "data": robot_status
-            }))
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)  # Update every second
         except Exception as e:
-            logger.error(f"Error in status broadcaster: {e}")
+            logger.error(f"Status broadcast error: {e}")
             await asyncio.sleep(1)
 
-asyncio.create_task(broadcast_status())
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks"""
+    asyncio.create_task(broadcast_status())
+    logger.info("🚀 Robot control server started")
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    if ROBOT_AVAILABLE:
+        try:
+            robot_movement.shutdown_robot()
+            logger.info("Robot shutdown completed")
+        except Exception as e:
+            logger.error(f"Shutdown error: {e}")
+
+# API Routes
 @app.get("/")
 async def read_root():
-    """Serve the React frontend"""
-    return FileResponse("frontend/build/index.html")
+    """Serve main page"""
+    return {
+        "message": "Robot Control API", 
+        "status": "online",
+        "robot_available": ROBOT_AVAILABLE
+    }
 
 @app.get("/api/status")
 async def get_status():
     """Get current robot status"""
-    if not robot_controller:
-        raise HTTPException(status_code=503, detail="Robot controller not available")
-    return RobotStatus(**robot_status)
+    if not ROBOT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Robot not available")
+    
+    try:
+        status_data = robot_movement.get_status()
+        return RobotStatusResponse(**status_data)
+    except Exception as e:
+        logger.error(f"Status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/command")
 async def execute_command(command: Command):
-    """Execute a robot command"""
-    if not robot_controller:
-        raise HTTPException(status_code=503, detail="Robot controller not available")
+    """Execute robot movement command"""
+    if not ROBOT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Robot not available")
     
     try:
-        success = await robot_controller.execute_command(command.command, command.duration)
-        response_message = f"Command '{command.command}' executed successfully" if success else f"Command '{command.command}' failed"
+        success = robot_movement.move(command.command.lower(), duration_ms=command.duration)
+        message = f"Command '{command.command}' {'executed' if success else 'failed'}"
         
         await manager.broadcast(json.dumps({
             "type": "command_executed",
-            "data": {"command": command.command, "success": success, "message": response_message}
+            "data": {"command": command.command, "success": success, "message": message}
         }))
         
-        return {"success": success, "message": response_message}
+        return {"success": success, "message": message}
     except Exception as e:
-        logger.error(f"Error executing command: {e}")
+        logger.error(f"Command error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/text-command")
 async def process_text_command(text_command: TextCommand):
     """Process natural language text command"""
-    if not robot_controller:
-        raise HTTPException(status_code=503, detail="Robot controller not available")
+    if not ROBOT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Robot not available")
     
     try:
-        success, response = await process_user_input(text_command.text, "")
-        await speak(response)  # Verbalize AI response
+        # Try to parse as movement command first
+        parsed = robot_movement.parse_command(text_command.text)
+        if parsed:
+            direction, duration = parsed
+            success = robot_movement.move(direction, duration_ms=duration)
+            response = f"Movement command executed: {direction}"
+        else:
+            # Process as chat
+            response = await robot_movement.chat(text_command.text)
+            success = True
         
         await manager.broadcast(json.dumps({
             "type": "text_command_processed",
-            "data": {"text": text_command.text, "success": success, "message": response}
+            "data": {"text": text_command.text, "success": success, "response": response}
         }))
         
         return {"success": success, "message": response}
     except Exception as e:
-        logger.error(f"Error processing text command: {e}")
+        logger.error(f"Text command error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/direction")
-async def move_direction(direction_command: DirectionCommand):
-    """Move robot in specified direction"""
-    if not robot_controller:
-        raise HTTPException(status_code=503, detail="Robot controller not available")
+@app.post("/api/speak")
+async def make_robot_speak(speech_command: SpeechCommand):
+    """Make robot speak"""
+    if not ROBOT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Robot not available")
     
     try:
-        process_immediate_command(direction_command.direction.lower())
+        success = robot_movement.speak(speech_command.text)
         
         await manager.broadcast(json.dumps({
-            "type": "direction_command",
-            "data": {"direction": direction_command.direction, "message": f"Moving {direction_command.direction}"}
+            "type": "speech_output",
+            "data": {"text": speech_command.text, "success": success}
         }))
         
-        return {"success": True, "message": f"Moving {direction_command.direction}"}
+        return {"success": success, "message": f"Spoke: {speech_command.text}"}
     except Exception as e:
-        logger.error(f"Error moving direction: {e}")
+        logger.error(f"Speech error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/api/stop")
-async def stop_robot():
-    """Stop robot immediately"""
-    if not robot_controller:
-        raise HTTPException(status_code=503, detail="Robot controller not available")
+@app.post("/api/listen")
+async def listen_for_speech(timeout: int = 5):
+    """Listen for speech input"""
+    if not ROBOT_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Robot not available")
     
     try:
-        process_immediate_command("stop")
+        await manager.broadcast(json.dumps({
+            "type": "listening_started",
+            "data": {"timeout": timeout}
+        }))
+        
+        speech_text = robot_movement.listen_for_speech(timeout)
         
         await manager.broadcast(json.dumps({
-            "type": "robot_stopped",
-            "data": {"message": "Robot stopped"}
-        }))
-        
-        return {"success": True, "message": "Robot stopped"}
-    except Exception as e:
-        logger.error(f"Error stopping robot: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/speech/start")
-async def start_speech_recognition():
-    """Start speech recognition"""
-    if not robot_controller:
-        raise HTTPException(status_code=503, detail="Robot controller not available")
-    
-    try:
-        asyncio.create_task(handle_speech_recognition())
-        return {"success": True, "message": "Speech recognition started"}
-    except Exception as e:
-        logger.error(f"Error starting speech recognition: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def handle_speech_recognition():
-    """Handle speech recognition in background"""
-    try:
-        while True:
-            user_input = listen()
-            
-            if user_input:
-                success, response = await process_user_input(user_input, "")
-                await speak(response)  # Verbalize AI response
-                
-                await manager.broadcast(json.dumps({
-                    "type": "speech_recognized",
-                    "data": {
-                        "text": user_input,
-                        "success": success,
-                        "message": response
-                    }
-                }))
-            
-            await asyncio.sleep(0.1)
-    except Exception as e:
-        logger.error(f"Error in speech recognition: {e}")
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time communication"""
-    await manager.connect(websocket)
-    
-    try:
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            message_type = message.get("type")
-            payload = message.get("data", {})
-            
-            if message_type == "direction_command":
-                direction = payload.get("direction", "")
-                if direction:
-                    process_immediate_command(direction.lower())
-                    await manager.broadcast(json.dumps({
-                        "type": "direction_executed",
-                        "data": {"direction": direction}
-                    }))
-            
-            elif message_type == "text_command":
-                text = payload.get("text", "")
-                if text:
-                    success, response = await process_user_input(text, "")
-                    await speak(response)  # Verbalize AI response
-                    await manager.broadcast(json.dumps({
-                        "type": "text_command_result",
-                        "data": {"text": text, "success": success, "message": response}
-                    }))
-            
-            elif message_type == "stop_command":
-                process_immediate_command("stop")
-                await manager.broadcast(json.dumps({
-                    "type": "robot_stopped",
-                    "data": {"message": "Robot stopped via WebSocket"}
-                }))
-            
-            elif message_type == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-    
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        manager.disconnect(websocket)
-
-# Serve static files (React frontend)
-app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
-
-# Catch-all route for React Router
-@app.get("/{path:path}")
-async def catch_all(path: str):
-    """Catch-all route for React Router"""
-    return FileResponse("frontend/build/index.html")
-
-if __name__ == "__main__":
-    os.makedirs("frontend/build", exist_ok=True)
-    print("🚀 Starting Robot Control Web Server...")
-    print("📡 Server will be available at: http://localhost:8000")
-    print("🤖 Robot control interface ready!")
-    
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info",
-        reload=False
-    )
+            "type": "speech_input",
+            "data": {"
