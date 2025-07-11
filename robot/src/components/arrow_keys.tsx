@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UserHeader } from './UserContext';
+import { UserHeader } from './UserHeader';
 
 interface EnhancedRobotStatus {
   status: string;
@@ -31,8 +31,6 @@ type WSMessage =
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
   | { type: 'speech_output'; data: { text: string; success: boolean } }
-  | { type: 'user_recognized'; data: { user: string | null; success: boolean } }
-  | { type: 'user_registered'; data: { name: string; success: boolean } }
   | { type: 'obstacle_reset'; data: { message: string; success: boolean } }
   | { type: 'error'; data: { message: string } }
   | { type: 'ping' }
@@ -46,7 +44,6 @@ const ArrowKeys: React.FC = () => {
   
   // Enhanced state
   const [showCamera, setShowCamera] = useState(false);
-  const [userRegistrationName, setUserRegistrationName] = useState('');
   const [speechText, setSpeechText] = useState('');
   const [autoMode, setAutoMode] = useState(false);
   const [movementHistory, setMovementHistory] = useState<string[]>([]);
@@ -100,19 +97,6 @@ const ArrowKeys: React.FC = () => {
               break;
             case 'speech_output':
               setResponse(`🤖 Robot spoke: "${data.data.text}"`);
-              break;
-            case 'user_recognized':
-              if (data.data.success && data.data.user) {
-                setResponse(`👤 User recognized: ${data.data.user}`);
-              } else {
-                setResponse('❓ No user recognized');
-              }
-              break;
-            case 'user_registered':
-              setResponse(`📝 User registration: ${data.data.name} ${data.data.success ? 'succeeded' : 'failed'}`);
-              if (data.data.success) {
-                setUserRegistrationName('');
-              }
               break;
             case 'obstacle_reset':
               setResponse(data.data.message);
@@ -202,16 +186,6 @@ const ArrowKeys: React.FC = () => {
     }
   };
 
-  const recognizeUser = () => {
-    sendWebSocketMessage('recognize_user', { mode: 'auto' });
-  };
-
-  const registerUser = () => {
-    if (userRegistrationName.trim()) {
-      sendWebSocketMessage('register_user', { name: userRegistrationName.trim() });
-    }
-  };
-
   const toggleAutoMode = () => {
     const newMode = !autoMode;
     setAutoMode(newMode);
@@ -259,7 +233,7 @@ const ArrowKeys: React.FC = () => {
 
       <div style={styles.card}>
         <h2 style={styles.title}>Enhanced Arrow Key Control</h2>
-        <p style={styles.subtitle}>Direct robot control with face recognition and speech</p>
+        <p style={styles.subtitle}>Direct robot control with camera and speech</p>
         
         <div style={styles.connectionIndicator}>
           <div style={{
@@ -273,18 +247,15 @@ const ArrowKeys: React.FC = () => {
           </span>
         </div>
 
-        {/* Camera & User Management */}
+        {/* Camera Controls */}
         <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>👁️ Camera & Recognition</h3>
+          <h3 style={styles.sectionTitle}>👁️ Camera & Controls</h3>
           <div style={styles.buttonRow}>
             <button
               onClick={() => setShowCamera(!showCamera)}
               style={showCamera ? styles.activeBtn : styles.primaryBtn}
             >
               {showCamera ? '📷 Hide Camera' : '📷 Show Camera'}
-            </button>
-            <button onClick={recognizeUser} style={styles.secondaryBtn}>
-              👤 Recognize User
             </button>
             <button
               onClick={toggleAutoMode}
@@ -307,23 +278,6 @@ const ArrowKeys: React.FC = () => {
           <div style={styles.userInfo}>
             <span><strong>Current User:</strong> {status?.current_user || 'Unknown'}</span>
             <span><strong>Hand Gesture:</strong> {status?.hand_gesture || 'none'}</span>
-          </div>
-        </div>
-
-        {/* User Registration */}
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>📝 User Registration</h3>
-          <div style={styles.inputRow}>
-            <input
-              type="text"
-              placeholder="Enter your name to register"
-              value={userRegistrationName}
-              onChange={(e) => setUserRegistrationName(e.target.value)}
-              style={styles.input}
-            />
-            <button onClick={registerUser} style={styles.primaryBtn}>
-              Register New User
-            </button>
           </div>
         </div>
 
@@ -518,7 +472,6 @@ const ArrowKeys: React.FC = () => {
           <ul style={styles.instructionsList}>
             <li><strong>Movement:</strong> Press and hold arrow buttons to move, release to stop automatically</li>
             <li><strong>Emergency:</strong> Use STOP button for immediate halt</li>
-            <li><strong>Face Recognition:</strong> Camera identifies users automatically in Auto Mode</li>
             <li><strong>Speech:</strong> Enter text and click "Speak" to make robot talk</li>
             <li><strong>Auto Mode:</strong> Robot responds to hand gestures and face recognition</li>
             <li><strong>Sensors:</strong> 1=Front, 2=Left, 3=Right obstacle detection</li>
@@ -825,5 +778,4 @@ const styles = {
   }
 };
 
-// FIXED: Added the missing export default statement
 export default ArrowKeys;
