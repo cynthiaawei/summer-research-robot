@@ -1,512 +1,601 @@
-import asyncio
-import re
+"""
+robot_movement.py - Unified module integrating face recognition, hand detection, and robot movement
+This module provides the interface expected by the FastAPI web application.
+"""
+
 import threading
 import time
+import cv2
+import asyncio
+import json
 import logging
-from typing import Dict, Optional
+import numpy as np
+from collections import deque
+from typing import Optional, Dict, List, Tuple, Any
+import traceback
 
+# Import your existing modules
 try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
-    print("⚠️ GPIO not available - running in simulation mode")
-
-try:
-    from langchain_ollama import OllamaLLM
-    from langchain_core.prompts import ChatPromptTemplate
-    AI_AVAILABLE = True
-except ImportError:
-    AI_AVAILABLE = False
-    print("⚠️ AI model not available - install langchain-ollama for AI features")
+    import hand
+    import face_helper as FR
+    import movement_RGB as movement
+    MODULES_AVAILABLE = True
+except ImportError as e:
+    logging.error(f"Failed to import required modules: {e}")
+    MODULES_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class RobotController:
+    """Unified robot controller integrating all functionality"""
+    
     def __init__(self):
-        """Initialize the robot controller"""
-        self.setup_gpio()
-        self.setup_ai()
-        self.reset_state()
+        self.cap = None
+        self.camera_active = False
+        self.hand_detector = None
+        self.hand_history = deque(maxlen=10)
+        self.current_user = "Unknown"
+        self.faces_detected = []
+        self.hand_gesture = "none"
+        self.last_speech_output = ""
+        self.listening = False
+        self.speech_recognition_active = False
+        self.interaction_mode = "idle"
+        self.face_recognition_attempts = 0
+        self.awaiting_registration = False
+        self.face_recognition_available = False
+        self.speech_recognition_available = False
+        self.mediapipe_available = False
+        self.gpio_available = False
         
-    def setup_gpio(self):
-        """Setup GPIO pins and PWM"""
-        if not GPIO_AVAILABLE:
-            logger.warning("GPIO not available - running in simulation mode")
-            return
-            
-        # Motor Pin Definitions
-        self.Motor1_Speed = 38
-        self.Motor1_Dir = 40
-        self.Motor2_Speed = 32
-        self.Motor2_Dir = 36
-        self.Motor3_Speed = 16
-        self.Motor3_Dir = 26
+        # Threading
+        self.hand_thread = None
+        self.face_thread = None
+        self.camera_thread = None
+        self.movement_thread = None
+        self.running = False
+        self.thread_lock = threading.Lock()
         
-        # Ultrasonic Sensor Pins
-        self.Echo1 = 31
-        self.Echo2 = 29
-        self.Echo3 = 22
-        self.Trig1 = 11
-        self.Trig2 = 13
-        self.Trig3 = 15
-        
-        try:
-            # GPIO Setup
-            GPIO.setmode(GPIO.BOARD)
-            GPIO.setup(self.Echo1, GPIO.IN)
-            GPIO.setup(self.Echo2, GPIO.IN)
-            GPIO.setup(self.Echo3, GPIO.IN)
-            GPIO.setup(self.Trig1, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Trig2, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Trig3, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor1_Speed, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor1_Dir, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor2_Speed, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor2_Dir, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor3_Speed, GPIO.OUT, initial=GPIO.LOW)
-            GPIO.setup(self.Motor3_Dir, GPIO.OUT, initial=GPIO.LOW)
-            
-            # Set PWM frequencies
-            freq = 1000
-            self.Motor1_pwm = GPIO.PWM(self.Motor1_Speed, freq)
-            self.Motor2_pwm = GPIO.PWM(self.Motor2_Speed, freq)
-            self.Motor3_pwm = GPIO.PWM(self.Motor3_Speed, freq)
-            self.Motor1_pwm.start(0)
-            self.Motor2_pwm.start(0)
-            self.Motor3_pwm.start(0)
-            
-            logger.info("GPIO initialized successfully")
-        except Exception as e:
-            logger.error(f"GPIO initialization failed: {e}")
-            
-    def setup_ai(self):
-        """Setup AI model"""
-        if not AI_AVAILABLE:
-            logger.warning("AI model not available")
-            self.chain = None
-            return
-            
-        try:
-            template = """Answer the question below.\nHere is the conversation history: {context}\nQuestion: {question}\nAnswer:"""
-            model = OllamaLLM(model="llama3")
-            prompt = ChatPromptTemplate.from_template(template)
-            self.chain = prompt | model
-            logger.info("AI model initialized successfully")
-        except Exception as e:
-            logger.error(f"AI model initialization failed: {e}")
-            self.chain = None
-            
-    def reset_state(self):
-        """Reset robot state"""
-        self.gCurSpeed1 = 0
-        self.gCurSpeed2 = 0
-        self.gCurSpeed3 = 0
-        self.gSliderSpeed = 25
-        self.motor3_compensate = 15
+        # Status tracking
+        self.last_distances = []
         self.obstacle_detected = False
-        self.obstacle_detection_active = False
-        self.OBSTACLE_THRESHOLD = 30.0
-        self.movement_lock = threading.Lock()
-        self.interrupt_event = threading.Event()
-        self.obstacle_event = threading.Event()
-        self.command_character = ""
-        self.perm_stop = False
-        self.return_to_mode_selection = False
+        self.current_speeds = {"motor1": 0, "motor2": 0, "motor3": 0}
+        self.last_command = ""
+        self.start_time = time.time()
         
-        # Start obstacle detection thread
-        self.obstacle_thread = threading.Thread(target=self.obstacle_detection_loop, daemon=True)
-        self.obstacle_thread.start()
-        
-    def get_status(self) -> str:
-        """Get current robot status"""
-        if self.obstacle_detected:
-            return "obstacle_detected"
-        elif any([self.gCurSpeed1 > 0, self.gCurSpeed2 > 0, self.gCurSpeed3 > 0]):
-            return "moving"
-        else:
-            return "idle"
-            
-    def get_current_speeds(self) -> Dict[str, int]:
-        """Get current motor speeds"""
-        return {
-            "motor1": self.gCurSpeed1,
-            "motor2": self.gCurSpeed2,
-            "motor3": self.gCurSpeed3
-        }
-        
-    def get_distance(self, trig_pin, echo_pin, timeout=0.5) -> float:
-        """Get distance from ultrasonic sensor"""
-        if not GPIO_AVAILABLE:
-            return 100.0  # Simulation mode - no obstacles
-            
+        # Initialize if modules available
+        if MODULES_AVAILABLE:
+            self._initialize_components()
+    
+    def _initialize_components(self):
+        """Initialize all components"""
         try:
-            # Ensure clean state
-            GPIO.output(trig_pin, False)
-            time.sleep(0.000002)
-            
-            # Send trigger pulse
-            GPIO.output(trig_pin, True)
-            time.sleep(0.00001)
-            GPIO.output(trig_pin, False)
-            
-            # Wait for echo start
-            timeout_start = time.time()
-            while GPIO.input(echo_pin) == 0:
-                if time.time() - timeout_start > timeout:
-                    return -1
-            pulse_start = time.time()
-            
-            # Wait for echo end
-            timeout_start = time.time()
-            while GPIO.input(echo_pin) == 1:
-                if time.time() - timeout_start > timeout:
-                    return -1
-            pulse_end = time.time()
-            
-            # Calculate distance
-            pulse_duration = pulse_end - pulse_start
-            distance = pulse_duration * 17150  # Speed of sound calculation
-            distance = round(distance, 2)
-            
-            # Validate distance range
-            if distance < 2 or distance > 400:
-                return -1
-                
-            return distance
-        except Exception as e:
-            logger.error(f"Distance measurement error: {e}")
-            return -1
-            
-    def obstacle_detection_loop(self):
-        """Obstacle detection loop"""
-        while True:
-            try:
-                if self.obstacle_detection_active and not self.obstacle_detected:
-                    if any([self.gCurSpeed1 > 0, self.gCurSpeed2 > 0, self.gCurSpeed3 > 0]):
-                        if GPIO_AVAILABLE:
-                            distances = []
-                            for trig, echo in [(self.Trig1, self.Echo1), (self.Trig2, self.Echo2), (self.Trig3, self.Echo3)]:
-                                dist = self.get_distance(trig, echo, timeout=0.3)
-                                if dist > 0:
-                                    distances.append(dist)
-                            
-                            if distances:
-                                min_distance = min(distances)
-                                if min_distance < self.OBSTACLE_THRESHOLD:
-                                    logger.warning(f"Obstacle detected at {min_distance}cm!")
-                                    self.obstacle_detected = True
-                                    self.obstacle_event.set()
-                                    self.emergency_stop()
-                        
-                        time.sleep(0.05)
-                    else:
-                        time.sleep(0.1)
-                else:
-                    time.sleep(0.1)
-                    
-            except Exception as e:
-                logger.error(f"Error in obstacle detection: {e}")
-                time.sleep(0.1)
-                
-    def emergency_stop(self):
-        """Emergency stop"""
-        with self.movement_lock:
-            try:
-                if GPIO_AVAILABLE:
-                    self.Motor1_pwm.ChangeDutyCycle(0)
-                    self.Motor2_pwm.ChangeDutyCycle(0)
-                    self.Motor3_pwm.ChangeDutyCycle(0)
-                
-                self.gCurSpeed1 = 0
-                self.gCurSpeed2 = 0
-                self.gCurSpeed3 = 0
-                self.obstacle_detection_active = False
-                self.perm_stop = True
-                self.return_to_mode_selection = True
-                
-                logger.info("Emergency stop executed")
-            except Exception as e:
-                logger.error(f"Error during emergency stop: {e}")
-                
-    def change_speed_smooth(self, new_speed1, new_speed2, new_speed3):
-        """Change motor speeds smoothly"""
-        if not GPIO_AVAILABLE:
-            self.gCurSpeed1 = new_speed1
-            self.gCurSpeed2 = new_speed2
-            self.gCurSpeed3 = new_speed3
-            return
-            
-        with self.movement_lock:
-            if self.obstacle_detected or self.interrupt_event.is_set():
+            # Initialize camera
+            self.cap = cv2.VideoCapture(0, cv2.CAP_ANY)
+            if self.cap.isOpened():
+                self.camera_active = True
+                logger.info("✅ Camera initialized successfully")
+            else:
+                logger.error("❌ Failed to initialize camera")
                 return
-                
-            if any([new_speed1 > 0, new_speed2 > 0, new_speed3 > 0]):
-                self.obstacle_detection_active = True
             
-            steps = max(abs(new_speed1 - self.gCurSpeed1), 
-                       abs(new_speed2 - self.gCurSpeed2), 
-                       abs(new_speed3 - self.gCurSpeed3))
-            
-            if steps > 0:
-                for step in range(steps + 1):
-                    if self.obstacle_detected or self.interrupt_event.is_set():
-                        break
-                        
-                    progress = step / steps if steps > 0 else 1
-                    speed1 = int(self.gCurSpeed1 + (new_speed1 - self.gCurSpeed1) * progress)
-                    speed2 = int(self.gCurSpeed2 + (new_speed2 - self.gCurSpeed2) * progress)
-                    speed3 = int(self.gCurSpeed3 + (new_speed3 - self.gCurSpeed3) * progress)
-                    
-                    speed1 = max(0, min(100, speed1))
-                    speed2 = max(0, min(100, speed2))
-                    speed3 = max(0, min(100, speed3))
-                    
-                    if GPIO_AVAILABLE:
-                        self.Motor1_pwm.ChangeDutyCycle(speed1)
-                        self.Motor2_pwm.ChangeDutyCycle(speed2)
-                        self.Motor3_pwm.ChangeDutyCycle(speed3)
-                    
-                    time.sleep(0.01)
-            
-            if not self.obstacle_detected and not self.interrupt_event.is_set():
-                self.gCurSpeed1 = new_speed1
-                self.gCurSpeed2 = new_speed2
-                self.gCurSpeed3 = new_speed3
-            else:
-                if GPIO_AVAILABLE:
-                    self.Motor1_pwm.ChangeDutyCycle(0)
-                    self.Motor2_pwm.ChangeDutyCycle(0)
-                    self.Motor3_pwm.ChangeDutyCycle(0)
-                self.gCurSpeed1 = 0
-                self.gCurSpeed2 = 0
-                self.gCurSpeed3 = 0
-                
-            if all([new_speed1 == 0, new_speed2 == 0, new_speed3 == 0]):
-                self.obstacle_detection_active = False
-                
-    def move_robot(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
-        """Move robot in specified direction"""
-        if self.obstacle_detected:
-            return False
-            
-        if speed is None:
-            speed = self.gSliderSpeed
-            
-        self.obstacle_detected = False
-        self.interrupt_event.clear()
-        
-        direction_configs = {
-            "forward": {
-                "dirs": [GPIO.HIGH, GPIO.HIGH, GPIO.LOW] if GPIO_AVAILABLE else [1, 1, 0],
-                "speeds": [0, speed, speed + self.motor3_compensate]
-            },
-            "backward": {
-                "dirs": [GPIO.HIGH, GPIO.LOW, GPIO.HIGH] if GPIO_AVAILABLE else [1, 0, 1],
-                "speeds": [0, speed, speed + self.motor3_compensate]
-            },
-            "turnLeft": {
-                "dirs": [GPIO.HIGH, GPIO.LOW, GPIO.LOW] if GPIO_AVAILABLE else [1, 0, 0],
-                "speeds": [speed, speed, speed + self.motor3_compensate]
-            },
-            "turnRight": {
-                "dirs": [GPIO.LOW, GPIO.HIGH, GPIO.HIGH] if GPIO_AVAILABLE else [0, 1, 1],
-                "speeds": [speed, speed, speed + self.motor3_compensate]
-            },
-            "moveLeft": {
-                "dirs": [GPIO.HIGH, GPIO.HIGH, GPIO.LOW] if GPIO_AVAILABLE else [1, 1, 0],
-                "speeds": [int(speed * 1.5), speed, 0]
-            },
-            "moveRight": {
-                "dirs": [GPIO.LOW, GPIO.LOW, GPIO.HIGH] if GPIO_AVAILABLE else [0, 0, 1],
-                "speeds": [int(speed * 1.5), speed, speed + self.motor3_compensate]
-            },
-            "stop": {
-                "dirs": [GPIO.LOW, GPIO.LOW, GPIO.LOW] if GPIO_AVAILABLE else [0, 0, 0],
-                "speeds": [0, 0, 0]
-            }
-        }
-        
-        if direction not in direction_configs:
-            logger.error(f"Unknown direction: {direction}")
-            return False
-            
-        config = direction_configs[direction]
-        
-        if GPIO_AVAILABLE:
-            GPIO.output(self.Motor1_Dir, config["dirs"][0])
-            GPIO.output(self.Motor2_Dir, config["dirs"][1])
-            GPIO.output(self.Motor3_Dir, config["dirs"][2])
-        
-        self.change_speed_smooth(config["speeds"][0], config["speeds"][1], config["speeds"][2])
-        
-        if duration_ms is not None and duration_ms > 0:
-            start_time = time.time()
-            while time.time() - start_time < duration_ms / 1000:
-                if self.obstacle_detected or self.interrupt_event.is_set():
-                    break
-                time.sleep(0.01)
-            if not self.obstacle_detected and not self.interrupt_event.is_set():
-                self.change_speed_smooth(0, 0, 0)
-        
-        return True
-        
-    async def execute_command(self, command: str, duration: Optional[int] = None) -> bool:
-        """Execute a robot command"""
-        try:
-            self.command_character = command
-            command_map = {
-                "forward": "forward",
-                "backward": "backward",
-                "turnLeft": "turnLeft",
-                "turnRight": "turnRight",
-                "moveLeft": "moveLeft",
-                "moveRight": "moveRight",
-                "stop": "stop"
-            }
-            
-            robot_direction = command_map.get(command.lower())
-            if robot_direction:
-                success = self.move_robot(robot_direction, duration_ms=duration)
-                self.command_character = ""
-                logger.info(f"Command executed successfully: {command}")
-                return success
-            else:
-                logger.warning(f"Unknown command: {command}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error executing command: {e}")
-            self.command_character = ""
-            return False
-            
-    def cleanup(self):
-        """Cleanup GPIO resources"""
-        if GPIO_AVAILABLE:
+            # Initialize hand detector
             try:
-                self.Motor1_pwm.stop()
-                self.Motor2_pwm.stop()
-                self.Motor3_pwm.stop()
-                GPIO.cleanup()
-                logger.info("GPIO cleanup completed")
+                self.hand_detector = hand.handDetector()
+                self.mediapipe_available = True
+                logger.info("✅ Hand detector initialized")
             except Exception as e:
-                logger.error(f"Error during GPIO cleanup: {e}")
-
-# Global robot controller instance
-robot_controller = None
-
-def initialize_robot() -> RobotController:
-    """Initialize the global robot controller"""
-    global robot_controller
-    if robot_controller is None:
-        robot_controller = RobotController()
-    return robot_controller
-
-def process_immediate_command(command: str):
-    """Process immediate movement commands"""
-    global robot_controller
-    if robot_controller is None:
-        robot_controller = initialize_robot()
-    
-    command = command.strip().lower()
-    robot_controller.move_robot(command)
-
-async def process_user_input(user_input: str, context: str = "") -> bool:
-    """Process user input for movement commands"""
-    global robot_controller
-    if robot_controller is None:
-        robot_controller = initialize_robot()
-    
-    if not user_input:
-        return False
-    
-    directions = {
-        "forward": ["go forward", "move forward", "move ahead", "advance", "go straight"],
-        "backward": ["go backward", "move backward", "reverse", "back up", "go back"],
-        "stop": ["stop", "halt", "stand still", "brake", "freeze"],
-        "turnLeft": ["turn left", "rotate left", "spin left"],
-        "turnRight": ["turn right", "rotate right", "spin right"],
-        "moveLeft": ["move left", "strafe left", "slide left", "sidestep left"],
-        "moveRight": ["move right", "strafe right", "slide right", "sidestep right"]
-    }
-    
-    time_patterns = {
-        "seconds": r"(\d+(?:\.\d+)?)\s*(?:second|sec|s)s?",
-        "minutes": r"(\d+(?:\.\d+)?)\s*(?:minute|min|m)s?",
-        "hours": r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?"
-    }
-    
-    def get_direction(text: str) -> Optional[str]:
-        """Extract movement direction from text"""
-        text = text.lower()
-        for direction, phrases in directions.items():
-            if any(phrase in text for phrase in phrases):
-                return direction
-        return None
-    
-    def convert_to_milliseconds(text: str) -> Optional[int]:
-        """Convert time expressions to milliseconds"""
-        text = text.lower()
-        for unit, pattern in time_patterns.items():
-            match = re.search(pattern, text)
-            if match:
-                value = float(match.group(1))
-                if unit == "seconds":
-                    return int(value * 1000)
-                elif unit == "minutes":
-                    return int(value * 60000)
-                elif unit == "hours":
-                    return int(value * 3600000)
-        return None
-    
-    instructions = [instr.strip() for instr in user_input.split("then")]
-    command_sequence = []
-    has_movement = False
-    
-    robot_controller.return_to_mode_selection = False
-    robot_controller.obstacle_detected = False
-    
-    for instruction in instructions:
-        direction = get_direction(instruction)
-        time_ms = convert_to_milliseconds(instruction)
-        
-        if direction in ["turnLeft", "turnRight"] and time_ms is None:
-            time_ms = 1500
-        
-        if direction and time_ms is not None:
-            command_sequence.append((direction, time_ms))
-            has_movement = True
-        elif direction == "stop":
-            command_sequence.append(("stop", 0))
-            has_movement = True
-    
-    if has_movement:
-        logger.info(f"Executing command sequence: {command_sequence}")
-        for command, duration in command_sequence:
-            robot_controller.command_character = command
-            success = await robot_controller.execute_command(command, duration)
-            robot_controller.command_character = ""
+                logger.error(f"❌ Hand detector initialization failed: {e}")
             
-            if not success or robot_controller.perm_stop or robot_controller.obstacle_detected or robot_controller.return_to_mode_selection or robot_controller.interrupt_event.is_set():
-                break
-                
-            if duration > 0:
-                await asyncio.sleep(duration / 1000)
-        
-        robot_controller.return_to_mode_selection = False
-        robot_controller.obstacle_detected = False
-        return True
-    
-    # Handle non-movement commands with AI if available
-    if robot_controller.chain:
-        try:
-            result = robot_controller.chain.invoke({"context": context, "question": user_input})
-            logger.info(f"AI response: {result}")
-            return False  # AI response handled, no movement executed
+            # Initialize face recognition
+            try:
+                # Set up face helper to use our camera
+                FR.cap = self.cap
+                self.face_recognition_available = True
+                logger.info("✅ Face recognition initialized")
+            except Exception as e:
+                logger.error(f"❌ Face recognition initialization failed: {e}")
+            
+            # Check for speech recognition
+            try:
+                import speech_recognition as sr
+                self.speech_recognition_available = True
+                logger.info("✅ Speech recognition available")
+            except ImportError:
+                logger.error("❌ Speech recognition not available")
+            
+            # Check for GPIO
+            try:
+                import RPi.GPIO as GPIO
+                self.gpio_available = True
+                logger.info("✅ GPIO available")
+            except ImportError:
+                logger.info("ℹ️ GPIO not available (simulation mode)")
+            
+            # Start background threads
+            self._start_background_threads()
+            
         except Exception as e:
-            logger.error(f"AI model error: {e}")
+            logger.error(f"❌ Component initialization failed: {e}")
+            traceback.print_exc()
+    
+    def _start_background_threads(self):
+        """Start background processing threads"""
+        if not self.camera_active:
+            return
+            
+        self.running = True
+        
+        # Start hand detection thread
+        if self.mediapipe_available:
+            self.hand_thread = threading.Thread(target=self._hand_thread_worker, daemon=True)
+            self.hand_thread.start()
+            logger.info("✅ Hand detection thread started")
+        
+        # Start movement/conversation thread
+        self.movement_thread = threading.Thread(target=self._movement_thread_worker, daemon=True)
+        self.movement_thread.start()
+        logger.info("✅ Movement thread started")
+    
+    def _hand_thread_worker(self):
+        """Hand detection worker thread"""
+        while self.running and self.camera_active:
+            try:
+                success, frame = self.cap.read()
+                if not success:
+                    time.sleep(0.03)
+                    continue
+                
+                # Process hand gestures
+                if self.hand_detector:
+                    img = cv2.flip(frame, 1)
+                    self.hand_detector.findHands(img, draw=False)
+                    lmList = self.hand_detector.findPosition(img, draw=False)
+                    
+                    if lmList:
+                        if hand.is_waving(lmList, self.hand_detector, self.hand_history):
+                            self.hand_gesture = "waving"
+                        elif hand.is_shaking_hands(lmList):
+                            self.hand_gesture = "shaking_hands"
+                        else:
+                            self.hand_gesture = "detected"
+                    else:
+                        self.hand_gesture = "none"
+                
+                time.sleep(0.03)
+                
+            except Exception as e:
+                logger.error(f"Hand detection error: {e}")
+                time.sleep(0.1)
+    
+    def _movement_thread_worker(self):
+        """Movement and conversation worker thread"""
+        try:
+            # Run the main movement loop
+            asyncio.run(movement.main())
+        except Exception as e:
+            logger.error(f"Movement thread error: {e}")
+            traceback.print_exc()
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current robot status"""
+        return {
+            "status": "connected" if self.camera_active else "disconnected",
+            "message": "Robot operational" if self.camera_active else "Camera not available",
+            "obstacle_detected": self.obstacle_detected,
+            "current_speeds": self.current_speeds,
+            "last_distances": self.last_distances,
+            "last_command": self.last_command,
+            "uptime": time.time() - self.start_time,
+            "gpio_available": self.gpio_available,
+            "current_user": self.current_user,
+            "faces_detected": self.faces_detected,
+            "hand_gesture": self.hand_gesture,
+            "camera_active": self.camera_active,
+            "last_speech_output": self.last_speech_output,
+            "listening": self.listening,
+            "speech_recognition_active": self.speech_recognition_active,
+            "interaction_mode": self.interaction_mode,
+            "face_recognition_available": self.face_recognition_available,
+            "speech_recognition_available": self.speech_recognition_available,
+            "mediapipe_available": self.mediapipe_available,
+            "face_recognition_attempts": self.face_recognition_attempts,
+            "awaiting_registration": self.awaiting_registration
+        }
+    
+    def move(self, direction: str, duration_ms: Optional[int] = None) -> bool:
+        """Execute movement command"""
+        try:
+            self.last_command = f"{direction}"
+            if duration_ms:
+                self.last_command += f" for {duration_ms}ms"
+            
+            # Update current speeds based on direction
+            if direction == "forward":
+                self.current_speeds = {"motor1": 0, "motor2": 25, "motor3": 40}
+            elif direction == "backward":
+                self.current_speeds = {"motor1": 0, "motor2": 25, "motor3": 40}
+            elif direction in ["left", "turnleft"]:
+                self.current_speeds = {"motor1": 25, "motor2": 25, "motor3": 40}
+            elif direction in ["right", "turnright"]:
+                self.current_speeds = {"motor1": 25, "motor2": 25, "motor3": 40}
+            elif direction in ["moveleft"]:
+                self.current_speeds = {"motor1": 37, "motor2": 25, "motor3": 0}
+            elif direction in ["moveright"]:
+                self.current_speeds = {"motor1": 37, "motor2": 25, "motor3": 40}
+            elif direction == "stop":
+                self.current_speeds = {"motor1": 0, "motor2": 0, "motor3": 0}
+            
+            # If GPIO available, execute actual movement
+            if self.gpio_available and hasattr(movement, 'processCommand'):
+                if duration_ms:
+                    movement.processCommand(direction, duration_ms)
+                else:
+                    movement.processImmediateCommand(direction)
+            
+            # Simulate execution time
+            if duration_ms:
+                time.sleep(duration_ms / 1000)
+                self.current_speeds = {"motor1": 0, "motor2": 0, "motor3": 0}
+            
+            logger.info(f"✅ Movement command executed: {direction}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Movement command failed: {e}")
             return False
     
-    return False
+    def stop(self) -> bool:
+        """Stop robot immediately"""
+        return self.move("stop")
+    
+    def speak(self, text: str) -> bool:
+        """Make robot speak"""
+        try:
+            self.last_speech_output = text
+            if hasattr(movement, 'speak'):
+                movement.speak(text)
+            else:
+                # Fallback TTS
+                import subprocess
+                import platform
+                system = platform.system().lower()
+                if system == "linux":
+                    subprocess.run(["espeak", text], check=True)
+                elif system == "darwin":
+                    subprocess.run(["say", text], check=True)
+                else:
+                    print(f"🔊 {text}")
+            
+            logger.info(f"✅ Speech output: {text}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Speech failed: {e}")
+            return False
+    
+    def listen_for_speech(self, timeout: int = 5) -> Optional[str]:
+        """Listen for speech input"""
+        try:
+            self.listening = True
+            self.speech_recognition_active = True
+            
+            if hasattr(movement, 'listen'):
+                result = movement.listen()
+            else:
+                # Fallback speech recognition
+                import speech_recognition as sr
+                r = sr.Recognizer()
+                with sr.Microphone() as source:
+                    audio = r.listen(source, timeout=timeout)
+                    result = r.recognize_google(audio).lower()
+            
+            self.listening = False
+            self.speech_recognition_active = False
+            logger.info(f"✅ Speech input: {result}")
+            return result
+            
+        except Exception as e:
+            self.listening = False
+            self.speech_recognition_active = False
+            logger.error(f"❌ Speech recognition failed: {e}")
+            return None
+    
+    def recognize_user(self, mode: str = "auto") -> Optional[str]:
+        """Recognize current user"""
+        try:
+            if not self.face_recognition_available:
+                return None
+            
+            # Use your face recognition system
+            if hasattr(FR, 'findMatch'):
+                # Convert mode for your system
+                fr_mode = "s" if mode == "speech" else "t"
+                name = FR.findMatch(fr_mode)
+                if name and name != "UNKNOWN":
+                    self.current_user = name
+                    self.face_recognition_attempts = 0
+                    self.awaiting_registration = False
+                    logger.info(f"✅ User recognized: {name}")
+                    return name
+                else:
+                    self.face_recognition_attempts += 1
+                    if self.face_recognition_attempts >= 3:
+                        self.awaiting_registration = True
+                    logger.info(f"❌ User not recognized (attempt {self.face_recognition_attempts}/3)")
+                    return None
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ User recognition failed: {e}")
+            return None
+    
+    def register_new_user(self, name: str) -> bool:
+        """Register new user"""
+        try:
+            if not self.camera_active:
+                return False
+            
+            # Use your face recognition system to take and save picture
+            if hasattr(FR, 'take_picture') and self.cap:
+                FR.take_picture(name, self.cap)
+                
+                # Update the face recognition system with new user
+                path = '/home/robot/summer-research-robot/RGB-cam/images'
+                new_img_path = f'{path}/{name}.jpg'
+                
+                if hasattr(FR, 'encodeListKnown') and hasattr(FR, 'classNames'):
+                    new_img = cv2.imread(new_img_path)
+                    if new_img is not None:
+                        import face_recognition
+                        new_img_rgb = cv2.cvtColor(new_img, cv2.COLOR_BGR2RGB)
+                        new_encoding = face_recognition.face_encodings(new_img_rgb)
+                        if new_encoding:
+                            FR.encodeListKnown.append(new_encoding[0])
+                            FR.classNames.append(name)
+                            
+                            self.current_user = name
+                            self.face_recognition_attempts = 0
+                            self.awaiting_registration = False
+                            logger.info(f"✅ User registered: {name}")
+                            return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ User registration failed: {e}")
+            return False
+    
+    def reset_face_recognition_state(self) -> bool:
+        """Reset face recognition state"""
+        try:
+            self.face_recognition_attempts = 0
+            self.awaiting_registration = False
+            self.current_user = "Unknown"
+            logger.info("✅ Face recognition state reset")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Face recognition reset failed: {e}")
+            return False
+    
+    def set_interaction_mode(self, mode: str) -> bool:
+        """Set interaction mode"""
+        try:
+            valid_modes = ["idle", "speech", "text", "keyboard", "auto"]
+            if mode in valid_modes:
+                self.interaction_mode = mode
+                logger.info(f"✅ Interaction mode set to: {mode}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"❌ Set interaction mode failed: {e}")
+            return False
+    
+    async def handle_conversation_mode(self, mode: str) -> str:
+        """Handle conversation in specified mode"""
+        try:
+            if mode == "speech":
+                text = self.listen_for_speech()
+                if text:
+                    response = await self.chat(text)
+                    self.speak(response)
+                    return response
+                return "No speech detected"
+            elif mode == "text":
+                return "Text mode ready - send message via text command"
+            else:
+                return "Auto mode active"
+        except Exception as e:
+            logger.error(f"❌ Conversation mode failed: {e}")
+            return f"Error: {str(e)}"
+    
+    def parse_command(self, text: str) -> Optional[Tuple[str, int]]:
+        """Parse natural language command"""
+        try:
+            # Use your existing parsing logic from movement_RGB
+            if hasattr(movement, 'get_direction') and hasattr(movement, 'convert_to_milliseconds'):
+                direction = movement.get_direction(text)
+                time_ms = movement.convert_to_milliseconds(text)
+                
+                if direction:
+                    # Default turn time
+                    if direction in ["turnLeft", "turnRight"] and time_ms is None:
+                        time_ms = 1500
+                    return (direction, time_ms or 0)
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Command parsing failed: {e}")
+            return None
+    
+    async def chat(self, text: str) -> str:
+        """Handle AI chat"""
+        try:
+            # Use your existing AI chat system
+            if hasattr(movement, 'chain') and movement.chain:
+                result = movement.chain.invoke({"context": "", "question": text})
+                return str(result)
+            else:
+                return f"I heard: {text}"
+        except Exception as e:
+            logger.error(f"❌ Chat failed: {e}")
+            return "Sorry, I couldn't process that."
+    
+    def get_camera_frame(self) -> Optional[bytes]:
+        """Get current camera frame as JPEG bytes"""
+        try:
+            if not self.camera_active or not self.cap:
+                return None
+            
+            success, frame = self.cap.read()
+            if not success:
+                return None
+            
+            # Add overlays for detected faces and hands
+            display_frame = frame.copy()
+            
+            # Add hand gesture overlay
+            if self.hand_gesture != "none":
+                cv2.putText(display_frame, f"Gesture: {self.hand_gesture}", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
+            # Add user overlay
+            if self.current_user != "Unknown":
+                cv2.putText(display_frame, f"User: {self.current_user}", 
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+            
+            # Encode as JPEG
+            _, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            return buffer.tobytes()
+            
+        except Exception as e:
+            logger.error(f"❌ Camera frame capture failed: {e}")
+            return None
+    
+    def reset_obstacle_detection(self) -> bool:
+        """Reset obstacle detection"""
+        try:
+            self.obstacle_detected = False
+            if hasattr(movement, 'obstacle_detected'):
+                movement.obstacle_detected = False
+            if hasattr(movement, 'return_to_mode_selection'):
+                movement.return_to_mode_selection = False
+            logger.info("✅ Obstacle detection reset")
+            return True
+        except Exception as e:
+            logger.error(f"❌ Obstacle reset failed: {e}")
+            return False
+    
+    def shutdown_robot(self):
+        """Shutdown robot controller"""
+        try:
+            logger.info("🔄 Shutting down robot controller...")
+            self.running = False
+            
+            # Stop motors
+            self.move("stop")
+            
+            # Close camera
+            if self.cap:
+                self.cap.release()
+                self.camera_active = False
+            
+            # Wait for threads to finish
+            if self.hand_thread and self.hand_thread.is_alive():
+                self.hand_thread.join(timeout=1)
+            
+            if self.movement_thread and self.movement_thread.is_alive():
+                self.movement_thread.join(timeout=1)
+            
+            # GPIO cleanup
+            if self.gpio_available:
+                try:
+                    import RPi.GPIO as GPIO
+                    GPIO.cleanup()
+                except:
+                    pass
+            
+            logger.info("✅ Robot controller shutdown complete")
+            
+        except Exception as e:
+            logger.error(f"❌ Shutdown error: {e}")
+
+# Create global robot controller instance
+robot_controller = RobotController()
+
+# API functions expected by FastAPI app
+def get_status() -> Dict[str, Any]:
+    """Get robot status"""
+    return robot_controller.get_status()
+
+def move(direction: str, duration_ms: Optional[int] = None) -> bool:
+    """Move robot"""
+    return robot_controller.move(direction, duration_ms)
+
+def stop() -> bool:
+    """Stop robot"""
+    return robot_controller.stop()
+
+def speak(text: str) -> bool:
+    """Make robot speak"""
+    return robot_controller.speak(text)
+
+def listen_for_speech(timeout: int = 5) -> Optional[str]:
+    """Listen for speech"""
+    return robot_controller.listen_for_speech(timeout)
+
+def recognize_user(mode: str = "auto") -> Optional[str]:
+    """Recognize user"""
+    return robot_controller.recognize_user(mode)
+
+def register_new_user(name: str) -> bool:
+    """Register new user"""
+    return robot_controller.register_new_user(name)
+
+def reset_face_recognition_state() -> bool:
+    """Reset face recognition"""
+    return robot_controller.reset_face_recognition_state()
+
+def set_interaction_mode(mode: str) -> bool:
+    """Set interaction mode"""
+    return robot_controller.set_interaction_mode(mode)
+
+async def handle_conversation_mode(mode: str) -> str:
+    """Handle conversation"""
+    return await robot_controller.handle_conversation_mode(mode)
+
+def parse_command(text: str) -> Optional[Tuple[str, int]]:
+    """Parse command"""
+    return robot_controller.parse_command(text)
+
+async def chat(text: str) -> str:
+    """Chat with AI"""
+    return await robot_controller.chat(text)
+
+def get_camera_frame() -> Optional[bytes]:
+    """Get camera frame"""
+    return robot_controller.get_camera_frame()
+
+def reset_obstacle_detection() -> bool:
+    """Reset obstacle detection"""
+    return robot_controller.reset_obstacle_detection()
+
+def shutdown_robot():
+    """Shutdown robot"""
+    robot_controller.shutdown_robot()
+
+# For compatibility with existing code
+if __name__ == "__main__":
+    logger.info("🤖 Robot controller module loaded")
+    try:
+        while True:
+            status = get_status()
+            logger.info(f"Status: {status['status']}, User: {status['current_user']}, Gesture: {status['hand_gesture']}")
+            time.sleep(5)
+    except KeyboardInterrupt:
+        logger.info("👋 Shutting down...")
+        shutdown_robot()
