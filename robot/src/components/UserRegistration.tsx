@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useUser } from './UserContext';
+import { setUserName } from './UserHeader';
 
 interface EnhancedRobotStatus {
   status: string;
@@ -19,7 +19,6 @@ type WSMessage =
   | { type: 'pong' };
 
 const RegistrationPage: React.FC = () => {
-  const { setCurrentUser } = useUser();
   const navigate = useNavigate();
   
   // Core states - SAME AS WORKING COMPONENTS
@@ -80,7 +79,7 @@ const RegistrationPage: React.FC = () => {
                   data.data.current_user !== '' && 
                   !data.data.awaiting_registration) {
                 console.log('✅ USER RECOGNIZED DURING REGISTRATION:', data.data.current_user);
-                setCurrentUser(data.data.current_user);
+                setUserName(data.data.current_user);
                 setResponse(`Welcome back, ${data.data.current_user}!`);
                 
                 setTimeout(() => {
@@ -93,7 +92,7 @@ const RegistrationPage: React.FC = () => {
               setIsLoading(false);
               if (data.data.success) {
                 console.log('✅ REGISTRATION SUCCESS:', data.data.name);
-                setCurrentUser(data.data.name);
+                setUserName(data.data.name);
                 setResponse(`Welcome, ${data.data.name}! Registration successful.`);
                 
                 setTimeout(() => {
@@ -194,7 +193,7 @@ const RegistrationPage: React.FC = () => {
   };
 
   const skipToMenu = () => {
-    setCurrentUser('Guest');
+    setUserName('Guest');
     navigate('/menu');
   };
 
@@ -274,6 +273,13 @@ const RegistrationPage: React.FC = () => {
               >
                 🔄 Try Face Recognition Again
               </button>
+              <button 
+                onClick={skipToMenu} 
+                style={styles.skipBtn}
+                disabled={isLoading}
+              >
+                👤 Skip & Continue as Guest
+              </button>
             </div>
 
             {/* Debug Info */}
@@ -299,6 +305,9 @@ const RegistrationPage: React.FC = () => {
               <div style={styles.buttonRow}>
                 <button onClick={() => setRetryCount(0)} style={styles.refreshBtn}>
                   🔄 Retry Connection
+                </button>
+                <button onClick={skipToMenu} style={styles.skipBtn}>
+                  👤 Continue as Guest
                 </button>
               </div>
             )}
@@ -486,4 +495,18 @@ const styles = {
   }
 };
 
+// Add CSS animation for spinner
+const spinKeyframes = `
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+
+// Inject CSS
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.textContent = spinKeyframes;
+  document.head.appendChild(style);
+}
 export default RegistrationPage;
