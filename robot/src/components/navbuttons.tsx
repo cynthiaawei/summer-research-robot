@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { UserHeader } from './UserContext';
+import { UserHeader } from './UserHeader';
 
 interface HealthStatus {
   status: string;
