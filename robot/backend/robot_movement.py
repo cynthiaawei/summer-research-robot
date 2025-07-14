@@ -35,13 +35,14 @@ except ImportError:
         
         class SimpleFaceHelper:
             def __init__(self):
-                self.images_path = '/home/robot/summer-research-robot/RGB-cam/images'
+                # Use local facepics folder in backend directory
+                self.images_path = os.path.join(os.path.dirname(__file__), 'facepics')
                 self.cap = None
                 self.classNames = []
                 self.encodeListKnown = []
                 # Ensure directory exists
                 os.makedirs(self.images_path, exist_ok=True)
-                logging.info(f"Created images directory at {self.images_path}")
+                logging.info(f"Created/verified facepics directory at {self.images_path}")
             
             def speak(self, text):
                 """Simple cross-platform text-to-speech"""
@@ -79,33 +80,86 @@ except ImportError:
                     return None
             
             def take_picture(self, name, camera):
-                """Take a picture for registration"""
+                """Take a picture for registration with detailed logging"""
                 try:
-                    if camera and camera.isOpened():
-                        success, image = camera.read()
-                        if success:
-                            path = os.path.join(self.images_path, f'{name}.jpg')
-                            cv2.imwrite(path, image)
-                            logging.info(f"Picture saved for {name} at {path}")
+                    logging.info(f"📷 Starting picture capture for user: {name}")
+                    
+                    if not camera:
+                        logging.error("❌ No camera provided to take_picture")
+                        return False
+                    
+                    if not camera.isOpened():
+                        logging.error("❌ Camera is not opened")
+                        return False
+                    
+                    # Take the picture
+                    success, image = camera.read()
+                    
+                    if not success:
+                        logging.error("❌ Failed to capture image from camera")
+                        return False
+                    
+                    if image is None:
+                        logging.error("❌ Captured image is None")
+                        return False
+                    
+                    # Save the image
+                    filename = f'{name}.jpg'
+                    filepath = os.path.join(self.images_path, filename)
+                    
+                    logging.info(f"💾 Attempting to save image to: {filepath}")
+                    
+                    # Ensure directory exists
+                    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                    
+                    # Write the image
+                    result = cv2.imwrite(filepath, image)
+                    
+                    if result:
+                        # Verify the file was actually saved
+                        if os.path.exists(filepath):
+                            file_size = os.path.getsize(filepath)
+                            logging.info(f"✅ Picture saved successfully for {name}")
+                            logging.info(f"   📁 Path: {filepath}")
+                            logging.info(f"   📏 Size: {file_size} bytes")
                             return True
-                    return False
+                        else:
+                            logging.error(f"❌ File was not saved to {filepath}")
+                            return False
+                    else:
+                        logging.error(f"❌ cv2.imwrite failed for {filepath}")
+                        return False
+                        
                 except Exception as e:
-                    logging.error(f"Error taking picture: {e}")
+                    logging.error(f"❌ Error taking picture for {name}: {e}")
+                    logging.error(f"   Exception type: {type(e).__name__}")
+                    import traceback
+                    logging.error(f"   Traceback: {traceback.format_exc()}")
                     return False
             
             def findEncodings(self, images):
-                """Generate face encodings"""
+                """Generate face encodings with better error handling"""
                 if not FACE_RECOGNITION_AVAILABLE:
+                    logging.warning("Face recognition not available, returning empty encodings")
                     return []
+                
                 encodeList = []
                 try:
-                    for img in images:
-                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                        encodings = face_recognition.face_encodings(img_rgb)
-                        if encodings:
-                            encodeList.append(encodings[0])
+                    for i, img in enumerate(images):
+                        try:
+                            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                            encodings = face_recognition.face_encodings(img_rgb)
+                            if encodings:
+                                encodeList.append(encodings[0])
+                                logging.info(f"✅ Generated encoding for image {i+1}")
+                            else:
+                                logging.warning(f"⚠️ No face found in image {i+1}")
+                        except Exception as e:
+                            logging.error(f"❌ Error encoding image {i+1}: {e}")
                 except Exception as e:
-                    logging.error(f"Error generating encodings: {e}")
+                    logging.error(f"❌ Error in findEncodings: {e}")
+                
+                logging.info(f"📊 Generated {len(encodeList)} face encodings total")
                 return encodeList
         
         # Create the fallback instance
@@ -1109,49 +1163,98 @@ class EnhancedRobotController:
             return None
     
     def register_new_user(self, name: str) -> bool:
-        """Register a new user with face recognition using face_helper"""
+        """Register a new user with detailed logging and error handling"""
         if not FACE_HELPER_AVAILABLE:
-            logger.error("Face helper not available for registration")
+            logger.error("❌ Face helper not available for registration")
             return False
         
         try:
-            logger.info(f"Registering new user: {name}")
+            logger.info(f"🆔 Starting registration process for user: {name}")
             
-            # Use face_helper's take_picture function with the current camera
-            if self.camera and self.camera.isOpened():
-                # Take a picture using face_helper
-                FR.take_picture(name, self.camera)
-                
-                # Update the face_helper's known encodings
-                # Reload the images and update encodings
+            # Check if camera is available
+            if not self.camera:
+                logger.error("❌ No camera available for registration")
+                return False
+            
+            if not self.camera.isOpened():
+                logger.error("❌ Camera is not opened for registration")
+                return False
+            
+            logger.info("📷 Camera is available and opened")
+            
+            # Take a picture using face_helper
+            logger.info(f"📸 Taking picture for {name}...")
+            picture_success = FR.take_picture(name, self.camera)
+            
+            if not picture_success:
+                logger.error(f"❌ Failed to take picture for {name}")
+                return False
+            
+            logger.info(f"✅ Picture taken successfully for {name}")
+            
+            # Reload face recognition data
+            logger.info("🔄 Reloading face recognition data...")
+            
+            try:
+                # Clear existing data
                 FR.images = []
                 FR.classNames = []
-                FR.myList = os.listdir(FR.path)
                 
-                for cl in FR.myList:
-                    if cl.lower().endswith(('.png', '.jpg', '.jpeg')):
-                        cur_img = cv2.imread(f'{FR.path}/{cl}')
-                        if cur_img is not None:
-                            FR.images.append(cur_img)
-                            FR.classNames.append(os.path.splitext(cl)[0])
+                # Get the image directory
+                image_dir = FR.images_path if hasattr(FR, 'images_path') else FR.path
+                logger.info(f"📁 Loading images from: {image_dir}")
                 
-                # Update the encodings
-                FR.encodeListKnown = FR.findEncodings(FR.images)
+                # Load all images from directory
+                if os.path.exists(image_dir):
+                    myList = os.listdir(image_dir)
+                    logger.info(f"📄 Found {len(myList)} files in directory")
+                    
+                    for cl in myList:
+                        if cl.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            try:
+                                full_path = os.path.join(image_dir, cl)
+                                cur_img = cv2.imread(full_path)
+                                if cur_img is not None:
+                                    FR.images.append(cur_img)
+                                    FR.classNames.append(os.path.splitext(cl)[0])
+                                    logger.info(f"✅ Loaded image for user: {os.path.splitext(cl)[0]}")
+                                else:
+                                    logger.warning(f"⚠️ Could not load image: {cl}")
+                            except Exception as e:
+                                logger.error(f"❌ Error loading image {cl}: {e}")
+                    
+                    # Update the encodings
+                    logger.info("🧠 Generating face encodings...")
+                    FR.encodeListKnown = FR.findEncodings(FR.images)
+                    
+                    logger.info(f"📊 Face recognition updated:")
+                    logger.info(f"   👥 Total users: {len(FR.classNames)}")
+                    logger.info(f"   🧠 Total encodings: {len(FR.encodeListKnown)}")
+                    logger.info(f"   👤 Users: {FR.classNames}")
+                    
+                else:
+                    logger.error(f"❌ Image directory does not exist: {image_dir}")
+                    return False
                 
-                with self.state_lock:
-                    self.state.current_user = name
-                    self.state.face_recognition_attempts = 0
-                    self.state.awaiting_registration = False
-                    self.state.recognition_complete = False
-                
-                logger.info(f"New user registered successfully: {name}")
-                return True
-            else:
-                logger.error("Camera not available for registration")
-                return False
+            except Exception as e:
+                logger.error(f"❌ Error reloading face recognition data: {e}")
+                # Don't return False here, registration might still have worked
+            
+            # Update robot state
+            with self.state_lock:
+                self.state.current_user = name
+                self.state.face_recognition_attempts = 0
+                self.state.awaiting_registration = False
+                self.state.recognition_complete = True  # Registration counts as completion
+            
+            logger.info(f"🎉 Registration completed successfully for user: {name}")
+            return True
                 
         except Exception as e:
-            logger.error(f"User registration error: {e}")
+            logger.error(f"❌ Registration error for {name}: {e}")
+            logger.error(f"   Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"   Full traceback: {traceback.format_exc()}")
             return False
     
     def move(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
