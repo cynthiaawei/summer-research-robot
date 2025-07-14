@@ -37,6 +37,7 @@ const FaceRecognitionGate: React.FC = () => {
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectCountRef = useRef(0);
   const lastBackendAttempts = useRef(0);
+  const wsInitialized = useRef(false); // CRITICAL: Track if WS was initialized
 
   // Constants
   const MAX_RETRIES = 5;
@@ -64,9 +65,10 @@ const FaceRecognitionGate: React.FC = () => {
       }
       wsRef.current = null;
     }
+    wsInitialized.current = false;
   }, []);
 
-  // WebSocket message handler - STABLE
+  // STABLE WebSocket message handler
   const handleWebSocketMessage = useCallback((event: MessageEvent) => {
     if (!mountedRef.current) return;
     
@@ -146,7 +148,7 @@ const FaceRecognitionGate: React.FC = () => {
     }
   }, [navigate, localAttempts]);
 
-  // WebSocket connection handlers - STABLE
+  // STABLE WebSocket connection handlers
   const handleWebSocketOpen = useCallback(() => {
     if (!mountedRef.current) return;
     console.log('✅ Face Recognition WebSocket connected');
@@ -176,7 +178,7 @@ const FaceRecognitionGate: React.FC = () => {
       const delay = Math.min(3000 * Math.pow(1.5, reconnectCountRef.current - 1), 15000);
       
       reconnectTimerRef.current = setTimeout(() => {
-        if (mountedRef.current) {
+        if (mountedRef.current && !wsInitialized.current) {
           connectWebSocket();
         }
       }, delay);
@@ -185,9 +187,9 @@ const FaceRecognitionGate: React.FC = () => {
     }
   }, []);
 
-  // WebSocket connection function - STABLE
+  // STABLE WebSocket connection function
   const connectWebSocket = useCallback(() => {
-    if (!mountedRef.current) return;
+    if (!mountedRef.current || wsInitialized.current) return;
     
     cleanup();
     setConnectionStatus('connecting');
@@ -196,6 +198,7 @@ const FaceRecognitionGate: React.FC = () => {
     try {
       const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
       wsRef.current = ws;
+      wsInitialized.current = true; // Mark as initialized
 
       ws.addEventListener('open', handleWebSocketOpen);
       ws.addEventListener('message', handleWebSocketMessage);
@@ -206,15 +209,18 @@ const FaceRecognitionGate: React.FC = () => {
       console.error('Failed to create WebSocket:', error);
       setConnectionStatus('disconnected');
       setResponse('Failed to connect to robot');
+      wsInitialized.current = false;
     }
   }, [handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose, cleanup]);
 
-  // Initialize WebSocket connection ONCE
+  // Initialize WebSocket connection ONCE - CRITICAL FIX
   useEffect(() => {
-    connectWebSocket();
-  }, []); // Empty dependency array - only run once
+    if (!wsInitialized.current) {
+      connectWebSocket();
+    }
+  }, []); // EMPTY dependency array - only run once
 
-  // Camera setup - SEPARATE EFFECT
+  // Camera setup - SEPARATE EFFECT with minimal dependencies
   useEffect(() => {
     if (cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
@@ -239,7 +245,7 @@ const FaceRecognitionGate: React.FC = () => {
     }
   }, [connectionStatus]);
 
-  // Action functions
+  // Action functions - STABLE
   const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       console.log('📤 Sending:', type, data);
@@ -272,8 +278,10 @@ const FaceRecognitionGate: React.FC = () => {
     navigate('/menu');
   }, [navigate]);
 
+  // FIXED: Go to registration without WebSocket dependency issues
   const goToRegistration = useCallback(() => {
     console.log('📝 GOING TO REGISTRATION');
+    // Don't close WebSocket, just navigate
     navigate('/register');
   }, [navigate]);
 
@@ -378,7 +386,10 @@ const FaceRecognitionGate: React.FC = () => {
           </div>
           <div style={styles.buttonRow}>
             <button 
-              onClick={connectWebSocket} 
+              onClick={() => {
+                wsInitialized.current = false;
+                connectWebSocket();
+              }} 
               style={styles.primaryBtn}
             >
               🔄 Retry Connection
@@ -429,6 +440,7 @@ const FaceRecognitionGate: React.FC = () => {
             Local Attempts: {localAttempts}/{MAX_RECOGNITION_ATTEMPTS}<br />
             Show Options: {showUserOptions ? 'Yes' : 'No'}<br />
             WS Status: {connectionStatus}<br />
+            WS Initialized: {wsInitialized.current ? 'Yes' : 'No'}<br />
             Backend User: {status.current_user}<br />
             Backend Attempts: {status.face_recognition_attempts}<br />
             Awaiting Registration: {status.awaiting_registration ? 'Yes' : 'No'}<br />
