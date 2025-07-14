@@ -22,24 +22,27 @@ const RegistrationPage: React.FC = () => {
   const navigate = useNavigate();
   
   // Core states
-  const [response, setResponse] = useState<string>('');
+  const [response, setResponse] = useState<string>('Initializing...');
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const [retryCount, setRetryCount] = useState(0);
-  const maxRetries = 5;
 
   // Registration states
   const [registrationName, setRegistrationName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Use refs to avoid stale closure issues
+  // Refs
   const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const connectionAttempts = useRef(0);
+
+  // Constants
+  const MAX_CONNECTION_ATTEMPTS = 3;
 
   // Cleanup on unmount
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (reconnectTimerRef.current) {
@@ -47,17 +50,17 @@ const RegistrationPage: React.FC = () => {
       }
       if (wsRef.current) {
         wsRef.current.close();
+        wsRef.current = null;
       }
     };
   }, []);
 
-  // Memoized message handler to avoid stale closures
-  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
+  // SIMPLIFIED message handler
+  const handleMessage = useCallback((event: MessageEvent) => {
     if (!mountedRef.current) return;
     
     try {
       const data: WSMessage = JSON.parse(event.data);
-      console.log('📥 Registration received:', data.type, data);
       
       switch (data.type) {
         case 'status_update':
@@ -66,14 +69,15 @@ const RegistrationPage: React.FC = () => {
           // If user was recognized during registration, go to menu
           if (data.data.current_user && 
               data.data.current_user !== 'Unknown' && 
-              data.data.current_user !== '' && 
-              !data.data.awaiting_registration) {
+              data.data.current_user !== '') {
             console.log('✅ USER RECOGNIZED DURING REGISTRATION:', data.data.current_user);
             setUserName(data.data.current_user);
             setResponse(`Welcome back, ${data.data.current_user}!`);
             
             setTimeout(() => {
-              navigate('/menu');
+              if (mountedRef.current) {
+                navigate('/menu');
+              }
             }, 2000);
           }
           break;
@@ -86,7 +90,9 @@ const RegistrationPage: React.FC = () => {
             setResponse(`Welcome, ${data.data.name}! Registration successful.`);
             
             setTimeout(() => {
-              navigate('/menu');
+              if (mountedRef.current) {
+                navigate('/menu');
+              }
             }, 2000);
           } else {
             setResponse('❌ Registration failed. Please try again.');
@@ -109,77 +115,97 @@ const RegistrationPage: React.FC = () => {
     }
   }, [navigate]);
 
-  // Memoized connection handlers
-  const handleWebSocketOpen = useCallback(() => {
-    if (!mountedRef.current) return;
-    console.log('✅ Registration WebSocket connected');
-    setConnectionStatus('connected');
-    setResponse('Connected - ready for registration');
-    setRetryCount(0);
-  }, []);
-
-  const handleWebSocketError = useCallback(() => {
-    console.error('Registration WebSocket error');
-    setConnectionStatus('disconnected');
-    setResponse('Connection error');
-  }, []);
-
-  const handleWebSocketClose = useCallback(() => {
+  // SIMPLIFIED WebSocket connection - NO COMPLEX RECONNECTION
+  const connectWebSocket = useCallback(() => {
     if (!mountedRef.current) return;
     
-    console.log('Registration WebSocket closed');
-    setConnectionStatus('disconnected');
-    setResponse('Disconnected - reconnecting...');
-    wsRef.current = null;
+    // Close existing connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
     
-    reconnectTimerRef.current = setTimeout(() => {
-      if (mountedRef.current) {
-        setRetryCount(prev => prev + 1);
-      }
-    }, 3000);
-  }, []);
-
-  // WebSocket setup with proper event handler management
-  useEffect(() => {
-    if (retryCount >= maxRetries) {
+    if (connectionAttempts.current >= MAX_CONNECTION_ATTEMPTS) {
+      console.log('❌ Max connection attempts reached');
       setConnectionStatus('disconnected');
-      setResponse('Connection failed');
+      setResponse('Connection failed. You can still register without live camera feed.');
       return;
     }
-
-    if (!mountedRef.current) return;
     
+    connectionAttempts.current++;
     setConnectionStatus('connecting');
-    setResponse('Connecting to robot...');
+    setResponse(`Connecting to robot... (attempt ${connectionAttempts.current}/${MAX_CONNECTION_ATTEMPTS})`);
     
-    const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-    wsRef.current = websocket;
+    try {
+      const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = ws;
 
-    // Attach event listeners
-    websocket.addEventListener('open', handleWebSocketOpen);
-    websocket.addEventListener('message', handleWebSocketMessage);
-    websocket.addEventListener('error', handleWebSocketError);
-    websocket.addEventListener('close', handleWebSocketClose);
+      // Connection opened
+      ws.onopen = () => {
+        if (!mountedRef.current) return;
+        console.log('✅ Registration WebSocket connected');
+        setConnectionStatus('connected');
+        setResponse('Connected - ready for registration');
+        connectionAttempts.current = 0; // Reset on success
+      };
 
-    return () => {
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-      if (websocket) {
-        websocket.removeEventListener('open', handleWebSocketOpen);
-        websocket.removeEventListener('message', handleWebSocketMessage);
-        websocket.removeEventListener('error', handleWebSocketError);
-        websocket.removeEventListener('close', handleWebSocketClose);
-        websocket.close();
-      }
-    };
-  }, [retryCount, handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose]);
+      // Message received
+      ws.onmessage = handleMessage;
+
+      // Connection error
+      ws.onerror = () => {
+        if (!mountedRef.current) return;
+        console.error('❌ Registration WebSocket error');
+      };
+
+      // Connection closed
+      ws.onclose = () => {
+        if (!mountedRef.current) return;
+        console.log('🔌 Registration WebSocket closed');
+        wsRef.current = null;
+        
+        // Only auto-reconnect if we haven't reached max attempts
+        if (connectionAttempts.current < MAX_CONNECTION_ATTEMPTS) {
+          setConnectionStatus('connecting');
+          setResponse('Connection lost. Retrying...');
+          
+          reconnectTimerRef.current = setTimeout(() => {
+            if (mountedRef.current) {
+              connectWebSocket();
+            }
+          }, 2000);
+        } else {
+          setConnectionStatus('disconnected');
+          setResponse('Connection failed. You can still register without live features.');
+        }
+      };
+      
+      // Connection timeout
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          console.log('⏰ Registration WebSocket connection timeout');
+          ws.close();
+        }
+      }, 10000); // 10 second timeout
+      
+    } catch (error) {
+      console.error('Failed to create WebSocket:', error);
+      setConnectionStatus('disconnected');
+      setResponse('Failed to connect to robot');
+    }
+  }, [handleMessage]);
+
+  // Initialize WebSocket ONCE
+  useEffect(() => {
+    connectWebSocket();
+  }, []); // Empty dependency array - only run once
 
   // Camera setup
   useEffect(() => {
     if (cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
-      img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+      const timestamp = Date.now();
+      img.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${timestamp}`;
       
       img.onerror = () => {
         console.warn('Camera stream not available');
@@ -191,37 +217,124 @@ const RegistrationPage: React.FC = () => {
     }
   }, [connectionStatus]);
 
-  const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
+  // Send WebSocket message
+  const sendMessage = useCallback((type: string, data: any = {}) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       console.log('📤 Registration sending:', type, data);
       wsRef.current.send(JSON.stringify({ type, data }));
     } else {
-      setResponse('Not connected');
+      setResponse('Not connected - registration may not work optimally');
     }
   }, []);
 
+  // Action functions
   const handleRegistration = useCallback(() => {
     if (registrationName.trim()) {
       setIsLoading(true);
       setResponse('📝 Registering your face...');
-      sendWebSocketMessage('register_user', { name: registrationName.trim() });
+      
+      if (connectionStatus === 'connected') {
+        // Try WebSocket first
+        console.log('📤 Sending WebSocket registration for:', registrationName.trim());
+        sendMessage('register_user', { name: registrationName.trim() });
+      } else {
+        // Fallback: try HTTP registration if WebSocket is not connected
+        console.log('🌐 Trying HTTP registration for:', registrationName.trim());
+        setResponse('⚠️ WebSocket not connected. Trying HTTP registration...');
+        
+        fetch(`http://${window.location.hostname}:8000/api/register-user`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ name: registrationName.trim() }),
+        })
+        .then(response => {
+          console.log('📥 HTTP registration response status:', response.status);
+          return response.json();
+        })
+        .then(data => {
+          console.log('📥 HTTP registration response data:', data);
+          setIsLoading(false);
+          if (data.success) {
+            setUserName(registrationName.trim());
+            setResponse(`Welcome, ${registrationName.trim()}! Registration successful.`);
+            setTimeout(() => {
+              if (mountedRef.current) {
+                navigate('/menu');
+              }
+            }, 2000);
+          } else {
+            setResponse(`❌ Registration failed: ${data.message || 'Unknown error'}`);
+          }
+        })
+        .catch(error => {
+          setIsLoading(false);
+          setResponse(`❌ Registration failed. Network error: ${error.message}`);
+          console.error('Registration error:', error);
+        });
+      }
+      
+      // Add timeout for WebSocket registration
+      if (connectionStatus === 'connected') {
+        setTimeout(() => {
+          if (isLoading) {
+            console.log('⏰ WebSocket registration timeout, trying HTTP...');
+            setResponse('⏰ WebSocket timeout. Trying HTTP registration...');
+            
+            fetch(`http://${window.location.hostname}:8000/api/register-user`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ name: registrationName.trim() }),
+            })
+            .then(response => response.json())
+            .then(data => {
+              setIsLoading(false);
+              if (data.success) {
+                setUserName(registrationName.trim());
+                setResponse(`Welcome, ${registrationName.trim()}! Registration successful.`);
+                setTimeout(() => {
+                  if (mountedRef.current) {
+                    navigate('/menu');
+                  }
+                }, 2000);
+              } else {
+                setResponse(`❌ Registration failed: ${data.message || 'Unknown error'}`);
+              }
+            })
+            .catch(error => {
+              setIsLoading(false);
+              setResponse(`❌ Registration failed: ${error.message}`);
+            });
+          }
+        }, 10000); // 10 second timeout for WebSocket
+      }
     } else {
       setResponse('❌ Please enter your name');
     }
-  }, [registrationName, sendWebSocketMessage]);
+  }, [registrationName, connectionStatus, sendMessage, navigate, isLoading]);
 
   const goBackToRecognition = useCallback(() => {
     console.log('🔄 GOING BACK TO FACE RECOGNITION');
-    sendWebSocketMessage('reset_face_recognition');
+    if (connectionStatus === 'connected') {
+      sendMessage('reset_face_recognition');
+    }
     setTimeout(() => {
       navigate('/');
     }, 1000);
-  }, [navigate, sendWebSocketMessage]);
+  }, [navigate, connectionStatus, sendMessage]);
 
   const skipToMenu = useCallback(() => {
     setUserName('Guest');
     navigate('/menu');
   }, [navigate]);
+
+  const retryConnection = useCallback(() => {
+    connectionAttempts.current = 0; // Reset attempts
+    connectWebSocket();
+  }, [connectWebSocket]);
 
   return (
     <div style={styles.container}>
@@ -237,110 +350,112 @@ const RegistrationPage: React.FC = () => {
           }}></div>
           <span>
             {connectionStatus === 'connected' ? 'Connected & Ready' : 
-             connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+             connectionStatus === 'connecting' ? 'Connecting...' : 'Offline Mode'}
           </span>
         </div>
 
-        {connectionStatus === 'connected' && (
-          <>
-            <div style={styles.cameraContainer}>
-              <img
-                ref={cameraRef}
-                alt="Robot Camera Feed"
-                style={styles.cameraFeed}
-                onError={() => console.warn('Camera image failed to load')}
-                onLoad={() => console.log('Camera image loaded')}
-              />
+        {/* Camera - show regardless of connection status */}
+        <div style={styles.cameraContainer}>
+          <img
+            ref={cameraRef}
+            alt="Robot Camera Feed"
+            style={styles.cameraFeed}
+            onError={() => console.warn('Camera image failed to load')}
+            onLoad={() => console.log('Camera image loaded')}
+          />
+          {connectionStatus !== 'connected' && (
+            <div style={styles.cameraOverlay}>
+              📷 Camera feed unavailable<br />
+              <small>Registration will work without live preview</small>
             </div>
+          )}
+        </div>
 
-            <div style={styles.message}>
-              {isLoading && <span style={styles.loadingSpinner}></span>}
-              {response}
-            </div>
+        <div style={styles.message}>
+          {isLoading && <span style={styles.loadingSpinner}></span>}
+          {response}
+        </div>
 
-            <div style={styles.warningBox}>
-              🆔 <strong>New User Registration</strong><br />
-              The system doesn't recognize you. Please register to continue.
-            </div>
+        <div style={styles.warningBox}>
+          🆔 <strong>New User Registration</strong><br />
+          Please enter your name and register your face for future access.
+        </div>
 
-            <div style={styles.inputGroup}>
-              <input
-                type="text"
-                placeholder="Enter your full name"
-                value={registrationName}
-                onChange={(e) => setRegistrationName(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleRegistration()}
-                style={styles.input}
-                autoFocus
-              />
-              <button
-                onClick={handleRegistration}
-                disabled={!registrationName.trim() || isLoading}
-                style={{
-                  ...styles.primaryBtn,
-                  opacity: (!registrationName.trim() || isLoading) ? 0.6 : 1,
-                  cursor: (!registrationName.trim() || isLoading) ? 'not-allowed' : 'pointer'
-                }}
-              >
-                {isLoading ? '📝 Registering...' : '📝 Register My Face'}
-              </button>
-            </div>
+        {/* Registration form - always available */}
+        <div style={styles.inputGroup}>
+          <input
+            type="text"
+            placeholder="Enter your full name"
+            value={registrationName}
+            onChange={(e) => setRegistrationName(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleRegistration()}
+            style={styles.input}
+            autoFocus
+          />
+          <button
+            onClick={handleRegistration}
+            disabled={!registrationName.trim() || isLoading}
+            style={{
+              ...styles.primaryBtn,
+              opacity: (!registrationName.trim() || isLoading) ? 0.6 : 1,
+              cursor: (!registrationName.trim() || isLoading) ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {isLoading ? '📝 Registering...' : '📝 Register My Face'}
+          </button>
+        </div>
 
-            <div style={styles.tipBox}>
-              💡 <strong>Registration Tips:</strong><br />
-              • Look directly at the camera<br />
-              • Ensure good lighting<br />
-              • Keep your face visible and centered
-            </div>
-            
-            <div style={styles.buttonRow}>
-              <button 
-                onClick={goBackToRecognition} 
-                style={styles.secondaryBtn}
-                disabled={isLoading}
-              >
-                🔄 Try Face Recognition Again
-              </button>
-              <button 
-                onClick={skipToMenu} 
-                style={styles.skipBtn}
-                disabled={isLoading}
-              >
-                👤 Skip & Continue as Guest
-              </button>
-            </div>
+        <div style={styles.tipBox}>
+          💡 <strong>Registration Tips:</strong><br />
+          • Look directly at the camera (if available)<br />
+          • Ensure good lighting<br />
+          • Keep your face visible and centered<br />
+          • Registration works even without live camera feed
+        </div>
+        
+        <div style={styles.buttonRow}>
+          <button 
+            onClick={goBackToRecognition} 
+            style={styles.secondaryBtn}
+            disabled={isLoading}
+          >
+            🔄 Try Face Recognition Again
+          </button>
+          
+          {connectionStatus === 'disconnected' && (
+            <button 
+              onClick={retryConnection} 
+              style={styles.refreshBtn}
+              disabled={isLoading}
+            >
+              🔌 Retry Connection
+            </button>
+          )}
+          
+          <button 
+            onClick={skipToMenu} 
+            style={styles.skipBtn}
+            disabled={isLoading}
+          >
+            👤 Skip & Continue as Guest
+          </button>
+        </div>
 
-            {/* Debug Info */}
+        {/* Debug Info */}
+        {process.env.NODE_ENV === 'development' && (
+          <div style={styles.debugBox}>
+            <strong>Registration Debug:</strong><br />
+            WS Status: {connectionStatus}<br />
+            Connection Attempts: {connectionAttempts.current}/{MAX_CONNECTION_ATTEMPTS}<br />
             {status && (
-              <div style={styles.debugBox}>
-                <strong>Registration Debug:</strong><br />
-                WS Status: {connectionStatus}<br />
+              <>
                 Backend User: {status.current_user}<br />
-                Backend Attempts: {status.face_recognition_attempts}/3<br />
+                Backend Attempts: {status.face_recognition_attempts}<br />
                 Awaiting Registration: {status.awaiting_registration ? 'Yes' : 'No'}<br />
                 Camera: {status.camera_active ? 'Active' : 'Inactive'}<br />
-                Response: {response}
-              </div>
+              </>
             )}
-          </>
-        )}
-
-        {connectionStatus !== 'connected' && (
-          <div>
-            <div style={styles.disconnectedMessage}>
-              {connectionStatus === 'connecting' ? 'Connecting to robot...' : 'Connection failed'}
-            </div>
-            
-            {connectionStatus === 'disconnected' && (
-              <div style={styles.buttonRow}>
-                <button onClick={() => setRetryCount(0)} style={styles.refreshBtn}>
-                  🔄 Retry Connection
-                </button>
-                <button onClick={skipToMenu} style={styles.skipBtn}>
-                  👤 Continue as Guest
-                </button>
-              </div>
-            )}
+            Response: {response}
           </div>
         )}
       </div>
@@ -390,7 +505,8 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: '2rem',
-    fontSize: '1rem'
+    fontSize: '1rem',
+    fontWeight: '600'
   },
   statusDot: {
     width: '12px',
@@ -399,6 +515,7 @@ const styles = {
     marginRight: '10px'
   },
   cameraContainer: {
+    position: 'relative' as const,
     textAlign: 'center' as const,
     marginBottom: '2rem'
   },
@@ -411,6 +528,18 @@ const styles = {
     boxShadow: '0 8px 16px rgba(0, 0, 0, 0.1)',
     minHeight: '300px',
     backgroundColor: '#f7fafc'
+  },
+  cameraOverlay: {
+    position: 'absolute' as const,
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
+    background: 'rgba(0, 0, 0, 0.7)',
+    color: 'white',
+    padding: '1rem',
+    borderRadius: '8px',
+    fontSize: '1rem',
+    textAlign: 'center' as const
   },
   message: {
     fontSize: '1.2rem',
@@ -469,7 +598,8 @@ const styles = {
     background: 'linear-gradient(135deg, #667eea, #764ba2)',
     color: 'white',
     fontSize: '1rem',
-    fontWeight: '600'
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   secondaryBtn: {
     padding: '0.75rem 1.5rem',
@@ -479,7 +609,8 @@ const styles = {
     background: 'linear-gradient(135deg, #48bb78, #38a169)',
     color: 'white',
     fontSize: '0.9rem',
-    fontWeight: '600'
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   skipBtn: {
     padding: '0.75rem 1.5rem',
@@ -489,7 +620,8 @@ const styles = {
     background: 'transparent',
     color: '#718096',
     fontSize: '0.9rem',
-    fontWeight: '600'
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   refreshBtn: {
     padding: '0.75rem 1.5rem',
@@ -499,7 +631,8 @@ const styles = {
     background: 'linear-gradient(135deg, #ed8936, #dd6b20)',
     color: 'white',
     fontSize: '0.9rem',
-    fontWeight: '600'
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   loadingSpinner: {
     display: 'inline-block',
@@ -519,11 +652,6 @@ const styles = {
     fontSize: '0.8rem',
     color: '#4a5568',
     textAlign: 'left' as const
-  },
-  disconnectedMessage: {
-    fontSize: '1.1rem',
-    color: '#718096',
-    marginBottom: '2rem'
   }
 };
 
