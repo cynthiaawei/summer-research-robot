@@ -21,79 +21,119 @@ const FaceRecognitionGate: React.FC = () => {
   const navigate = useNavigate();
   
   // Core states
-  const [response, setResponse] = useState<string>('');
+  const [response, setResponse] = useState<string>('Initializing...');
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  
+  // Recognition state management - COMPLETELY SEPARATE FROM BACKEND
+  const [recognitionState, setRecognitionState] = useState<'scanning' | 'max_attempts' | 'success'>('scanning');
+  const [localAttempts, setLocalAttempts] = useState(0);
+  const [showUserOptions, setShowUserOptions] = useState(false);
 
-  // Use refs to avoid stale closure issues
+  // Refs
   const wsRef = useRef<WebSocket | null>(null);
   const cameraRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(true);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectCountRef = useRef(0);
-  const maxRetries = 5;
+  const lastBackendAttempts = useRef(0);
+
+  // Constants
+  const MAX_RETRIES = 5;
+  const MAX_RECOGNITION_ATTEMPTS = 3;
 
   // Cleanup on unmount
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      cleanup();
     };
   }, []);
 
-  // Stable message handler
-  const handleMessage = useCallback((event: MessageEvent) => {
+  const cleanup = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (wsRef.current) {
+      try {
+        wsRef.current.close();
+      } catch (e) {
+        console.warn('Error closing WebSocket:', e);
+      }
+      wsRef.current = null;
+    }
+  }, []);
+
+  // WebSocket message handler - STABLE
+  const handleWebSocketMessage = useCallback((event: MessageEvent) => {
     if (!mountedRef.current) return;
     
     try {
       const data: WSMessage = JSON.parse(event.data);
-      console.log('📥 Received:', data.type, data);
+      console.log('📥 Face Recognition received:', data.type, data);
       
       switch (data.type) {
         case 'status_update':
           setStatus(data.data);
           
-          // If user recognized - go to menu
+          // Track backend attempts to detect changes
+          const backendAttempts = data.data.face_recognition_attempts || 0;
+          
+          // SUCCESS CASE: User recognized
           if (data.data.current_user && 
               data.data.current_user !== 'Unknown' && 
-              data.data.current_user !== '' && 
-              !data.data.awaiting_registration) {
+              data.data.current_user !== '') {
+            
             console.log('✅ USER RECOGNIZED:', data.data.current_user);
             setUserName(data.data.current_user);
-            setResponse(`Welcome back, ${data.data.current_user}!`);
+            setRecognitionState('success');
+            setResponse(`Welcome back, ${data.data.current_user}! Redirecting...`);
             
+            // Navigate after delay
             setTimeout(() => {
               if (mountedRef.current) {
                 navigate('/menu');
               }
             }, 2000);
+            return;
           }
-          // If awaiting registration - go to registration page
-          else if (data.data.awaiting_registration) {
-            console.log('🔄 REDIRECTING TO REGISTRATION');
-            navigate('/register');
-          }
-          // Show scanning progress
-          else if (data.data.face_recognition_attempts > 0 && 
-                   data.data.face_recognition_attempts < 3) {
-            setResponse(`Scanning for faces... (${data.data.face_recognition_attempts}/3)`);
-          }
-          else {
-            setResponse('Scanning for faces...');
+          
+          // ATTEMPT TRACKING: Only update if backend attempts increased
+          if (backendAttempts > lastBackendAttempts.current) {
+            setLocalAttempts(backendAttempts);
+            lastBackendAttempts.current = backendAttempts;
+            
+            if (backendAttempts >= MAX_RECOGNITION_ATTEMPTS) {
+              // MAX ATTEMPTS REACHED - Show options, DON'T auto-navigate
+              console.log('❌ MAX ATTEMPTS REACHED - showing user options');
+              setRecognitionState('max_attempts');
+              setShowUserOptions(true);
+              setResponse('Face recognition failed after 3 attempts. What would you like to do?');
+            } else {
+              // Still attempting
+              setRecognitionState('scanning');
+              setResponse(`Scanning for faces... (${backendAttempts}/${MAX_RECOGNITION_ATTEMPTS})`);
+            }
+          } else if (backendAttempts === 0 && localAttempts > 0) {
+            // Reset detected
+            console.log('🔄 Recognition reset detected');
+            setLocalAttempts(0);
+            setRecognitionState('scanning');
+            setShowUserOptions(false);
+            setResponse('Face recognition reset. Scanning...');
           }
           break;
           
         case 'face_recognition_reset':
           if (data.data.success) {
-            setResponse('Face recognition reset. Scanning...');
+            console.log('✅ Face recognition reset confirmed');
+            setLocalAttempts(0);
+            lastBackendAttempts.current = 0;
+            setRecognitionState('scanning');
+            setShowUserOptions(false);
+            setResponse('Face recognition reset. Starting new scan...');
           }
           break;
           
@@ -102,111 +142,127 @@ const FaceRecognitionGate: React.FC = () => {
           break;
       }
     } catch (error) {
-      console.error('Parse error:', error);
+      console.error('Message parse error:', error);
     }
-  }, [navigate]);
+  }, [navigate, localAttempts]);
 
-  // Stable connection handlers
-  const handleOpen = useCallback(() => {
+  // WebSocket connection handlers - STABLE
+  const handleWebSocketOpen = useCallback(() => {
     if (!mountedRef.current) return;
-    console.log('✅ WebSocket connected');
+    console.log('✅ Face Recognition WebSocket connected');
     setConnectionStatus('connected');
-    setResponse('Scanning for faces...');
+    setResponse('Connected. Scanning for faces...');
     reconnectCountRef.current = 0;
   }, []);
 
-  const handleError = useCallback(() => {
-    console.error('WebSocket error');
+  const handleWebSocketError = useCallback(() => {
+    if (!mountedRef.current) return;
+    console.error('Face Recognition WebSocket error');
     setConnectionStatus('disconnected');
-    setResponse('Connection error');
+    setResponse('Connection error. Retrying...');
   }, []);
 
-  const handleClose = useCallback(() => {
+  const handleWebSocketClose = useCallback(() => {
     if (!mountedRef.current) return;
     
-    console.log('WebSocket closed');
+    console.log('Face Recognition WebSocket closed');
     setConnectionStatus('disconnected');
-    setResponse('Disconnected - reconnecting...');
+    setResponse('Connection lost. Reconnecting...');
     wsRef.current = null;
     
-    // Auto-reconnect with backoff
-    if (reconnectCountRef.current < maxRetries) {
+    // Exponential backoff reconnection
+    if (reconnectCountRef.current < MAX_RETRIES) {
       reconnectCountRef.current++;
+      const delay = Math.min(3000 * Math.pow(1.5, reconnectCountRef.current - 1), 15000);
+      
       reconnectTimerRef.current = setTimeout(() => {
         if (mountedRef.current) {
-          initializeWebSocket();
+          connectWebSocket();
         }
-      }, 3000);
+      }, delay);
     } else {
-      setResponse('Connection failed after maximum retries');
+      setResponse('Connection failed after maximum retries. Please refresh the page.');
     }
   }, []);
 
-  // Initialize WebSocket
-  const initializeWebSocket = useCallback(() => {
+  // WebSocket connection function - STABLE
+  const connectWebSocket = useCallback(() => {
     if (!mountedRef.current) return;
     
-    // Close existing connection
-    if (wsRef.current) {
-      wsRef.current.removeEventListener('open', handleOpen);
-      wsRef.current.removeEventListener('message', handleMessage);
-      wsRef.current.removeEventListener('error', handleError);
-      wsRef.current.removeEventListener('close', handleClose);
-      wsRef.current.close();
-    }
-    
+    cleanup();
     setConnectionStatus('connecting');
     setResponse('Connecting to robot...');
     
     try {
-      const websocket = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
-      wsRef.current = websocket;
+      const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`);
+      wsRef.current = ws;
 
-      // Attach event listeners
-      websocket.addEventListener('open', handleOpen);
-      websocket.addEventListener('message', handleMessage);
-      websocket.addEventListener('error', handleError);
-      websocket.addEventListener('close', handleClose);
+      ws.addEventListener('open', handleWebSocketOpen);
+      ws.addEventListener('message', handleWebSocketMessage);
+      ws.addEventListener('error', handleWebSocketError);
+      ws.addEventListener('close', handleWebSocketClose);
       
     } catch (error) {
       console.error('Failed to create WebSocket:', error);
       setConnectionStatus('disconnected');
+      setResponse('Failed to connect to robot');
     }
-  }, [handleOpen, handleMessage, handleError, handleClose]);
+  }, [handleWebSocketOpen, handleWebSocketMessage, handleWebSocketError, handleWebSocketClose, cleanup]);
 
-  // Initialize WebSocket only once
+  // Initialize WebSocket connection ONCE
   useEffect(() => {
-    initializeWebSocket();
-  }, [initializeWebSocket]);
+    connectWebSocket();
+  }, []); // Empty dependency array - only run once
 
-  // Camera setup
+  // Camera setup - SEPARATE EFFECT
   useEffect(() => {
     if (cameraRef.current && connectionStatus === 'connected') {
       const img = cameraRef.current;
-      img.src = `http://${window.location.hostname}:8000/api/camera/stream`;
+      const timestamp = Date.now();
+      img.src = `http://${window.location.hostname}:8000/api/camera/stream?t=${timestamp}`;
       
-      img.onerror = () => {
+      const handleError = () => {
         console.warn('Camera stream not available');
       };
       
-      img.onload = () => {
-        console.log('✅ Camera stream loaded successfully');
+      const handleLoad = () => {
+        console.log('✅ Camera stream loaded');
+      };
+      
+      img.addEventListener('error', handleError);
+      img.addEventListener('load', handleLoad);
+      
+      return () => {
+        img.removeEventListener('error', handleError);
+        img.removeEventListener('load', handleLoad);
       };
     }
   }, [connectionStatus]);
 
+  // Action functions
   const sendWebSocketMessage = useCallback((type: string, data: any = {}) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       console.log('📤 Sending:', type, data);
       wsRef.current.send(JSON.stringify({ type, data }));
+      return true;
     } else {
-      setResponse('Not connected');
+      console.warn('WebSocket not connected, cannot send message');
+      setResponse('Not connected to robot');
+      return false;
     }
   }, []);
 
   const resetRecognition = useCallback(() => {
     console.log('🔄 RESETTING FACE RECOGNITION');
     setResponse('Resetting face recognition...');
+    
+    // Reset local state immediately
+    setLocalAttempts(0);
+    lastBackendAttempts.current = 0;
+    setRecognitionState('scanning');
+    setShowUserOptions(false);
+    
+    // Send reset message to backend
     sendWebSocketMessage('reset_face_recognition');
   }, [sendWebSocketMessage]);
 
@@ -221,65 +277,162 @@ const FaceRecognitionGate: React.FC = () => {
     navigate('/register');
   }, [navigate]);
 
+  // Render helper functions
+  const renderConnectionStatus = () => (
+    <div style={styles.connectionIndicator}>
+      <div style={{
+        ...styles.statusDot,
+        backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
+                        connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
+      }}></div>
+      <span>
+        {connectionStatus === 'connected' ? 'Connected' : 
+         connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+      </span>
+    </div>
+  );
+
+  const renderCamera = () => (
+    <div style={styles.cameraContainer}>
+      <img
+        ref={cameraRef}
+        alt="Robot Camera Feed"
+        style={styles.cameraFeed}
+      />
+    </div>
+  );
+
+  const renderScanningState = () => (
+    <>
+      <div style={styles.infoBox}>
+        👁️ <strong>Face Recognition Active</strong><br />
+        Please look at the camera for identification
+        {localAttempts > 0 && (
+          <><br />Attempts: {localAttempts}/{MAX_RECOGNITION_ATTEMPTS}</>
+        )}
+      </div>
+      
+      <div style={styles.buttonRow}>
+        <button 
+          onClick={resetRecognition} 
+          style={styles.secondaryBtn}
+          disabled={connectionStatus !== 'connected'}
+        >
+          🔄 Reset & Try Again
+        </button>
+        <button 
+          onClick={continueAsGuest} 
+          style={styles.guestBtn}
+        >
+          👤 Continue as Guest
+        </button>
+      </div>
+    </>
+  );
+
+  const renderMaxAttemptsState = () => (
+    <div style={styles.optionsContainer}>
+      <div style={styles.warningBox}>
+        ❌ <strong>Recognition Failed</strong><br />
+        Face recognition failed after {MAX_RECOGNITION_ATTEMPTS} attempts. Please choose an option:
+      </div>
+      
+      <div style={styles.buttonGrid}>
+        <button 
+          onClick={resetRecognition} 
+          style={styles.primaryBtn}
+          disabled={connectionStatus !== 'connected'}
+        >
+          🔄 Try Again ({MAX_RECOGNITION_ATTEMPTS} more attempts)
+        </button>
+        <button 
+          onClick={goToRegistration} 
+          style={styles.registerBtn}
+        >
+          📝 Register as New User
+        </button>
+        <button 
+          onClick={continueAsGuest} 
+          style={styles.guestBtn}
+        >
+          👤 Continue as Guest
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderSuccessState = () => (
+    <div style={styles.successBox}>
+      ✅ <strong>Recognition Successful!</strong><br />
+      Redirecting to main menu...
+    </div>
+  );
+
+  const renderMainContent = () => {
+    if (connectionStatus === 'disconnected') {
+      return (
+        <div style={styles.disconnectedContainer}>
+          <div style={styles.warningBox}>
+            ⚠️ <strong>Connection Lost</strong><br />
+            Unable to connect to robot. Please check your connection.
+          </div>
+          <div style={styles.buttonRow}>
+            <button 
+              onClick={connectWebSocket} 
+              style={styles.primaryBtn}
+            >
+              🔄 Retry Connection
+            </button>
+            <button 
+              onClick={continueAsGuest} 
+              style={styles.guestBtn}
+            >
+              👤 Continue as Guest
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    switch (recognitionState) {
+      case 'scanning':
+        return renderScanningState();
+      case 'max_attempts':
+        return renderMaxAttemptsState();
+      case 'success':
+        return renderSuccessState();
+      default:
+        return renderScanningState();
+    }
+  };
+
   return (
     <div style={styles.container}>
       <div style={styles.card}>
         <h1 style={styles.title}>🤖 Robot Access Control</h1>
         <p style={styles.subtitle}>Face recognition security system</p>
         
-        <div style={styles.connectionIndicator}>
-          <div style={{
-            ...styles.statusDot,
-            backgroundColor: connectionStatus === 'connected' ? '#48bb78' : 
-                            connectionStatus === 'connecting' ? '#ed8936' : '#e53e3e'
-          }}></div>
-          <span>
-            {connectionStatus === 'connected' ? 'Connected' : 
-             connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
-          </span>
-        </div>
-        
-        <div style={styles.cameraContainer}>
-          <img
-            ref={cameraRef}
-            alt="Robot Camera Feed"
-            style={styles.cameraFeed}
-            onError={() => console.warn('Camera image failed to load')}
-            onLoad={() => console.log('Camera image loaded')}
-          />
-        </div>
+        {renderConnectionStatus()}
+        {renderCamera()}
 
         <div style={styles.message}>
           {response}
         </div>
 
-        <div style={styles.infoBox}>
-          👁️ <strong>Face Recognition Active</strong><br />
-          Please look at the camera for identification
-        </div>
-        
-        <div style={styles.buttonRow}>
-          <button onClick={resetRecognition} style={styles.secondaryBtn}>
-            🔄 Reset & Try Again
-          </button>
-          <button onClick={continueAsGuest} style={styles.guestBtn}>
-            👤 Continue as Guest
-          </button>
-          <button onClick={goToRegistration} style={styles.registerBtn}>
-            📝 Register as User
-          </button>
-        </div>
+        {renderMainContent()}
 
-        {/* Debug Info */}
-        {status && (
+        {/* Debug Info - Remove in production */}
+        {process.env.NODE_ENV === 'development' && status && (
           <div style={styles.debugBox}>
             <strong>Debug Info:</strong><br />
+            Frontend State: {recognitionState}<br />
+            Local Attempts: {localAttempts}/{MAX_RECOGNITION_ATTEMPTS}<br />
+            Show Options: {showUserOptions ? 'Yes' : 'No'}<br />
             WS Status: {connectionStatus}<br />
             Backend User: {status.current_user}<br />
-            Backend Attempts: {status.face_recognition_attempts}/3<br />
+            Backend Attempts: {status.face_recognition_attempts}<br />
             Awaiting Registration: {status.awaiting_registration ? 'Yes' : 'No'}<br />
-            Camera: {status.camera_active ? 'Active' : 'Inactive'}<br />
-            Response: {response}
+            Camera: {status.camera_active ? 'Active' : 'Inactive'}
           </div>
         )}
       </div>
@@ -370,12 +523,57 @@ const styles = {
     borderRadius: '12px',
     border: '1px solid rgba(59, 130, 246, 0.3)'
   },
+  warningBox: {
+    fontSize: '1.1rem',
+    color: '#4a5568',
+    marginBottom: '2rem',
+    padding: '1rem',
+    background: 'rgba(254, 215, 170, 0.8)',
+    borderRadius: '12px',
+    border: '1px solid rgba(251, 146, 60, 0.4)'
+  },
+  successBox: {
+    fontSize: '1.1rem',
+    color: '#4a5568',
+    marginBottom: '2rem',
+    padding: '1rem',
+    background: 'rgba(209, 250, 229, 0.8)',
+    borderRadius: '12px',
+    border: '1px solid rgba(52, 211, 153, 0.4)'
+  },
+  optionsContainer: {
+    marginBottom: '2rem'
+  },
+  disconnectedContainer: {
+    marginBottom: '2rem'
+  },
+  buttonGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: '1rem',
+    marginBottom: '1rem'
+  },
   buttonRow: {
     display: 'flex',
     gap: '0.5rem',
     justifyContent: 'center',
     flexWrap: 'wrap' as const,
     marginBottom: '1rem'
+  },
+  primaryBtn: {
+    padding: '1rem 2rem',
+    borderRadius: '12px',
+    border: 'none',
+    cursor: 'pointer',
+    background: 'linear-gradient(135deg, #48bb78, #38a169)',
+    color: 'white',
+    fontSize: '1rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease',
+    disabled: {
+      opacity: 0.6,
+      cursor: 'not-allowed'
+    }
   },
   secondaryBtn: {
     padding: '0.75rem 1.5rem',
@@ -385,7 +583,8 @@ const styles = {
     background: 'linear-gradient(135deg, #48bb78, #38a169)',
     color: 'white',
     fontSize: '0.9rem',
-    fontWeight: '600'
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   guestBtn: {
     padding: '0.75rem 1.5rem',
@@ -395,17 +594,19 @@ const styles = {
     background: 'transparent',
     color: '#667eea',
     fontSize: '0.9rem',
-    fontWeight: '600'
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   registerBtn: {
-    padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
+    padding: '1rem 2rem',
+    borderRadius: '12px',
     border: 'none',
     cursor: 'pointer',
     background: 'linear-gradient(135deg, #667eea, #764ba2)',
     color: 'white',
-    fontSize: '0.9rem',
-    fontWeight: '600'
+    fontSize: '1rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   debugBox: {
     marginTop: '2rem',
