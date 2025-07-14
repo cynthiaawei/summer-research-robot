@@ -17,14 +17,21 @@ from collections import deque
 
 # Import your existing face_helper module
 try:
-    # Add the path to your face_helper module
-    sys.path.append('/home/robot/summer-research-robot')
+    # Try importing from the same directory first
     import face_helper as FR
     FACE_HELPER_AVAILABLE = True
-    logging.info("Successfully imported face_helper module")
-except ImportError as e:
-    FACE_HELPER_AVAILABLE = False
-    logging.error(f"Face helper not available: {e}")
+    logging.info("Successfully imported face_helper module from current directory")
+except ImportError:
+    try:
+        # Fallback: try the original path
+        sys.path.append('/home/robot/summer-research-robot')
+        import face_helper as FR
+        FACE_HELPER_AVAILABLE = True
+        logging.info("Successfully imported face_helper module from parent directory")
+    except ImportError as e:
+        FACE_HELPER_AVAILABLE = False
+        logging.error(f"Face helper not available: {e}")
+        logging.error("Please copy face_helper.py to the backend directory or /home/robot/summer-research-robot/")
 
 # Import your existing modules with fallbacks
 try:
