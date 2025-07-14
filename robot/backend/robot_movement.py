@@ -395,9 +395,10 @@ class EnhancedRobotState:
     # Interaction mode
     interaction_mode: str = "idle"  # idle, speech, text, keyboard, auto
     
-    # Face recognition state - FIXED
+    # Face recognition state - FIXED with proper state management
     face_recognition_attempts: int = 0
     awaiting_registration: bool = False
+    recognition_complete: bool = False  # NEW: Track if recognition cycle is complete
 
 class EnhancedRobotController:
     """Enhanced robot controller with face recognition and speech capabilities"""
@@ -598,13 +599,10 @@ class EnhancedRobotController:
             logger.error(f"Failed to start background tasks: {e}")
     
     def _unified_vision_loop(self):
-        """FIXED: Unified vision processing loop with proper face recognition logic"""
+        """FIXED: Unified vision processing loop with proper face recognition reset"""
         last_user_check = time.time()
         
-        # Face recognition state - COMPLETELY REWRITTEN
-        recognition_attempts = 0
-        max_recognition_attempts = 3
-        recognition_complete = False  # NEW: Track if recognition cycle is complete
+        # Hand gesture state
         last_gesture = "none"
         gesture_cooldown = time.time()
         
@@ -663,12 +661,17 @@ class EnhancedRobotController:
                                         self.state.hand_gesture = "none"
                                 last_gesture = "none"
                     
-                    # FIXED: Face recognition logic - NO AUTO-NAVIGATION AFTER 3 ATTEMPTS
+                    # FIXED: Face recognition logic - Using robot state for recognition_complete
+                    with self.state_lock:
+                        recognition_complete = self.state.recognition_complete
+                        current_attempts = self.state.face_recognition_attempts
+                        awaiting_registration = self.state.awaiting_registration
+                    
                     if (current_time - last_user_check > 3.0 and  # Every 3 seconds
                         self.face_helper and 
                         self.state.hand_gesture == "none" and  # Only when no gestures
-                        not recognition_complete and  # NEW: Only if recognition not complete
-                        not self.state.awaiting_registration):  # Don't try during registration
+                        not recognition_complete and  # Only if recognition not complete
+                        not awaiting_registration):  # Don't try during registration
                         
                         last_user_check = current_time
                         try:
@@ -682,6 +685,7 @@ class EnhancedRobotController:
                                         self.state.last_speech_output = f"Hello {current_user}!"
                                         self.state.face_recognition_attempts = 0
                                         self.state.awaiting_registration = False
+                                        self.state.recognition_complete = False  # Reset for next cycle
                                         
                                         # Non-blocking speech
                                         if self.config.enable_speech_synthesis:
@@ -692,25 +696,20 @@ class EnhancedRobotController:
                                             ).start()
                                         logger.info(f"✅ User recognized: {current_user}")
                                 
-                                # Reset recognition state for next cycle
-                                recognition_attempts = 0
-                                recognition_complete = False
-                                
                             else:
                                 # ATTEMPT FAILED: User not recognized
-                                recognition_attempts += 1
+                                new_attempts = current_attempts + 1
                                 with self.state_lock:
-                                    self.state.face_recognition_attempts = recognition_attempts
+                                    self.state.face_recognition_attempts = new_attempts
                                 
-                                logger.info(f"🔍 Face recognition attempt {recognition_attempts}/{max_recognition_attempts}")
+                                logger.info(f"🔍 Face recognition attempt {new_attempts}/3")
                                 
                                 # FIXED: After 3 attempts, mark as complete but DON'T auto-navigate
-                                if recognition_attempts >= max_recognition_attempts:
-                                    recognition_complete = True  # Stop trying
+                                if new_attempts >= 3:
                                     with self.state_lock:
+                                        self.state.recognition_complete = True  # Stop trying
                                         self.state.current_user = "Unknown"
                                         # CRITICAL FIX: DON'T set awaiting_registration = True automatically
-                                        # Let the frontend decide what to do based on face_recognition_attempts
                                     
                                     logger.info("❌ Face recognition complete after 3 attempts - waiting for user choice (NO auto-navigation)")
                                     
@@ -731,15 +730,15 @@ class EnhancedRobotController:
                 time.sleep(0.1)
     
     def reset_face_recognition_state(self):
-        """FIXED: Reset face recognition state to allow new attempts"""
+        """FIXED: Reset face recognition state to properly restart recognition cycle"""
         with self.state_lock:
+            # Reset ALL recognition state variables
             self.state.face_recognition_attempts = 0
             self.state.awaiting_registration = False
             self.state.current_user = "Unknown"
+            self.state.recognition_complete = False  # This is the KEY fix - restart recognition cycle
         
-        # The vision loop will automatically start trying again when recognition_complete is reset
-        # This happens because the reset will set face_recognition_attempts back to 0
-        logger.info("✅ Face recognition state reset - ready for new 3-attempt cycle")
+        logger.info("✅ Face recognition state COMPLETELY reset - starting NEW 3-attempt cycle")
         return True
     
     def _obstacle_detection_loop(self):
@@ -994,7 +993,8 @@ class EnhancedRobotController:
                 "speech_recognition_available": SPEECH_RECOGNITION_AVAILABLE,
                 "mediapipe_available": MEDIAPIPE_AVAILABLE,
                 "face_recognition_attempts": self.state.face_recognition_attempts,
-                "awaiting_registration": self.state.awaiting_registration
+                "awaiting_registration": self.state.awaiting_registration,
+                "recognition_complete": self.state.recognition_complete
             }
     
     def speak(self, text: str) -> bool:
