@@ -1858,7 +1858,7 @@ except ImportError:
         class SimpleFaceHelper:
             def __init__(self):
                 # FIXED: Use backend/images directory (not facepics!)
-                self.images_path = "images"
+                self.images_path = '/home/robot/summer-research-robot/RGB-cam/images'
                 self.cap = None
                 self.classNames = []
                 self.encodeListKnown = []
@@ -2573,7 +2573,7 @@ class EnhancedRobotController:
             return "Unknown"
     
     def register_new_user(self, name: str) -> bool:
-        """Registration that passes frame directly to avoid camera conflicts"""
+        """Use the same simple approach as standalone version"""
         try:
             logger.info(f"🆔 REGISTRATION: Starting for {name}")
             
@@ -2586,25 +2586,17 @@ class EnhancedRobotController:
                     self.state.awaiting_registration = False
                 return False
             
-            # Clear buffer thoroughly
-            logger.info("📷 Camera is free, clearing buffer...")
-            last_frame = None
-            for i in range(10):
+            # Clear buffer
+            logger.info("📷 Clearing camera buffer...")
+            for i in range(5):
                 ret, frame = self.camera.read()
                 if ret and frame is not None:
-                    logger.info(f"✅ Buffer clear {i+1}: Got frame {frame.shape}")
-                    last_frame = frame  # Keep the last good frame
+                    logger.info(f"✅ Buffer clear {i+1}: Got frame")
                 time.sleep(0.1)
             
-            if last_frame is None:
-                logger.error("❌ No valid frame captured during buffer clearing")
-                with self.state_lock:
-                    self.state.awaiting_registration = False
-                return False
-            
-            # Save the frame directly instead of calling FR.take_picture
-            logger.info("📸 Saving registration photo directly...")
-            success = self._save_registration_photo(name, last_frame)
+            # Use FR.take_picture (same as standalone)
+            logger.info("📸 Taking picture using face_helper...")
+            success = FR.take_picture(name, self.camera)
             
             # Update state
             with self.state_lock:
@@ -2622,7 +2614,6 @@ class EnhancedRobotController:
             with self.state_lock:
                 self.state.awaiting_registration = False
             return False
-
     def _save_registration_photo(self, name: str, frame) -> bool:
         """Save registration photo directly from frame"""
         try:

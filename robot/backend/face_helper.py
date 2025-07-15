@@ -24,10 +24,10 @@ class FaceRecognitionSystem:
             # DIRECT PATH - change this to match your exact system
             if platform.system().lower() == "windows":
                 # For Windows (your development machine)
-                self.images_path = "images"
+                self.images_path = "/home/robot/summer-research-robot/RGB-cam/images"
             else:
                 # For Linux/Raspberry Pi
-                self.images_path = "images"
+                self.images_path = "/home/robot/summer-research-robot/RGB-cam/images"
         else:
             self.images_path = images_path
         
@@ -160,101 +160,28 @@ class FaceRecognitionSystem:
         return valid_encodings
     
     def take_picture(self, name, camera):
-        """DEBUG VERSION: Find exactly where it's failing"""
-        try:
-            logger.info(f"📷 DEBUG: Starting picture capture for user: {name}")
-            logger.info(f"📁 DEBUG: Saving to path: {self.images_path}")
-            logger.info(f"📁 DEBUG: Absolute path: {os.path.abspath(self.images_path)}")
+        """Use the EXACT same method that works in standalone"""
+        success, image = camera.read()
+
+        if success:
+            # Use the exact same path as your working standalone version
+            path = os.path.join('/home/robot/summer-research-robot/RGB-cam/images', name + '.jpg')
+            result = cv2.imwrite(path, image)
             
-            if not camera:
-                logger.error("❌ DEBUG: No camera provided")
-                return False
-            
-            if not camera.isOpened():
-                logger.error("❌ DEBUG: Camera is not opened")
-                return False
-            
-            logger.info("📷 DEBUG: Camera is available, starting frame capture...")
-            
-            # Simplified frame capture - just take one frame
-            success, image = camera.read()
-            logger.info(f"📷 DEBUG: Frame capture result - Success: {success}, Image is None: {image is None}")
-            
-            if not success or image is None:
-                logger.error("❌ DEBUG: Failed to capture frame")
-                return False
-            
-            logger.info(f"📷 DEBUG: Got frame with shape: {image.shape}")
-            
-            # Skip face detection for now - just save the image
-            best_frame = image.copy()
-            
-            # Clean the name for filename
-            clean_name = name.strip().replace(' ', '_').lower()
-            filename = f'{clean_name}.jpg'
-            filepath = os.path.join(self.images_path, filename)
-            
-            logger.info(f"💾 DEBUG: Clean name: {clean_name}")
-            logger.info(f"💾 DEBUG: Filename: {filename}")
-            logger.info(f"💾 DEBUG: Full filepath: {filepath}")
-            logger.info(f"💾 DEBUG: Absolute filepath: {os.path.abspath(filepath)}")
-            
-            # Ensure the directory exists
-            logger.info("📁 DEBUG: Creating directory...")
-            os.makedirs(self.images_path, exist_ok=True)
-            logger.info(f"📁 DEBUG: Directory exists after creation: {os.path.exists(self.images_path)}")
-            
-            # Test write permissions
-            try:
-                test_file = os.path.join(self.images_path, "test_write.tmp")
-                with open(test_file, 'w') as f:
-                    f.write("test")
-                os.remove(test_file)
-                logger.info("✅ DEBUG: Write permission test passed")
-            except Exception as e:
-                logger.error(f"❌ DEBUG: Write permission test failed: {e}")
-                return False
-            
-            # Save the image
-            logger.info("💾 DEBUG: Attempting cv2.imwrite...")
-            result = cv2.imwrite(filepath, best_frame)
-            logger.info(f"💾 DEBUG: cv2.imwrite returned: {result}")
-            
-            # Check if file exists
-            file_exists = os.path.exists(filepath)
-            logger.info(f"💾 DEBUG: File exists after save: {file_exists}")
-            
-            if file_exists:
-                file_size = os.path.getsize(filepath)
-                logger.info(f"💾 DEBUG: File size: {file_size} bytes")
-            
-            if result and file_exists:
-                file_size = os.path.getsize(filepath)
-                logger.info(f"✅ DEBUG: SUCCESS! Picture saved for {name}")
-                logger.info(f"   📁 FULL PATH: {filepath}")
-                logger.info(f"   📏 Size: {file_size} bytes")
+            if result and os.path.exists(path):
+                print(f"✅ Image saved successfully to {path}")
+                file_size = os.path.getsize(path)
+                print(f"📏 File size: {file_size} bytes")
                 
-                # Try to reload face data
-                try:
-                    logger.info("🔄 DEBUG: Reloading face data...")
-                    self.load_face_data()
-                    logger.info(f"🔄 DEBUG: Face data reloaded. Known users: {self.classNames}")
-                except Exception as e:
-                    logger.error(f"❌ DEBUG: Failed to reload face data: {e}")
-                
+                # Reload face data like in standalone
+                self.load_face_data()
                 return True
             else:
-                logger.error(f"❌ DEBUG: FAILED to save image")
-                logger.error(f"   cv2.imwrite result: {result}")
-                logger.error(f"   File exists: {file_exists}")
+                print(f"❌ Failed to save image to {path}")
                 return False
-                
-        except Exception as e:
-            logger.error(f"❌ DEBUG: Exception in take_picture: {e}")
-            import traceback
-            logger.error(f"   DEBUG: Full traceback:\n{traceback.format_exc()}")
+        else:
+            print("❌ Failed to capture image from camera")
             return False
-    
     def recognize_face_in_frame(self, img):
         """Recognize faces in a single frame with improved logic"""
         try:
@@ -547,7 +474,7 @@ def initialize_globals():
     images = face_recognition_system.images
     classNames = face_recognition_system.classNames
     encodeListKnown = face_recognition_system.encodeListKnown
-    path = face_recognition_system.images_path
+    path = '/home/robot/summer-research-robot/RGB-cam/images'
     cap = face_recognition_system.cap
 
 # Initialize on import
