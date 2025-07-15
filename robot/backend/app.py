@@ -448,7 +448,8 @@ async def camera_stream():
     if not robot_movement_available:
         raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
-    def generate_frames():
+    def generate_frames():  
+        """Generate camera frames - FIXED VERSION"""
         frame_count = 0
         last_frame_time = time.time()
         max_failures = 20
@@ -458,17 +459,6 @@ async def camera_stream():
         
         while True:
             try:
-                # IMMEDIATE CHECK: Stop if registration starts
-                if is_registration_in_progress():
-                    logger.info("📹 STOPPING camera stream - Registration started!")
-                    break
-                
-                # Also check robot state
-                status = robot_movement.get_status()
-                if status.get('awaiting_registration', False):
-                    logger.info("📹 STOPPING camera stream - Robot awaiting registration!")
-                    break
-                
                 frame_bytes = robot_movement.get_camera_frame()
                 current_time = time.time()
                 
@@ -478,20 +468,15 @@ async def camera_stream():
                     failure_count = 0
                     
                     yield (b'--frame\r\n'
-                        b'Content-Type: image/jpeg\r\n'
-                        b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' + 
-                        frame_bytes + b'\r\n')
-                    
-                    # Check again after each frame
-                    if is_registration_in_progress():
-                        logger.info("📹 STOPPING camera stream mid-frame - Registration detected!")
-                        break
+                           b'Content-Type: image/jpeg\r\n'
+                           b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' + 
+                           frame_bytes + b'\r\n')
                     
                     time.sleep(0.067)  # ~15 FPS
                 else:
                     failure_count += 1
                     if (current_time - last_frame_time > 10.0) or (failure_count > max_failures):
-                        logger.warning(f"📹 Camera stream ending: no frames for {current_time - last_frame_time:.1f}s or {failure_count} failures")
+                        logger.warning(f"📹 Camera stream ending")
                         break
                     time.sleep(0.2)
                     
@@ -502,11 +487,24 @@ async def camera_stream():
                 logger.error(f"❌ Camera streaming error: {e}")
                 failure_count += 1
                 if failure_count > max_failures:
-                    logger.error("📹 Too many camera failures, ending stream")
                     break
                 time.sleep(0.5)
-        
-        logger.info(f"📹 Camera stream ended (streamed {frame_count} frames)")
+    
+    # ADD THIS RETURN STATEMENT:
+    try:
+        return StreamingResponse(
+            generate_frames(), 
+            media_type="multipart/x-mixed-replace; boundary=frame",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "Access-Control-Allow-Origin": "*"
+            }
+        )
+    except Exception as e:
+        logger.error(f"❌ Camera stream initialization error: {e}")
+        raise HTTPException(status_code=500, detail=f"Camera stream error: {str(e)}")
 @app.post("/api/text-command")
 async def process_text_command(text_command: TextCommand):
     """Process natural language text command with error handling"""
