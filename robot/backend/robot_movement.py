@@ -2573,32 +2573,38 @@ class EnhancedRobotController:
             return "Unknown"
     
     def register_new_user(self, name: str) -> bool:
-        """Registration that works with stream stopping"""
+        """Registration that passes frame directly to avoid camera conflicts"""
         try:
-            logger.info(f"🆔 REGISTRATION: Starting for {name} (streams should be stopped)")
+            logger.info(f"🆔 REGISTRATION: Starting for {name}")
             
-            # Set robot state
             with self.state_lock:
                 self.state.awaiting_registration = True
             
-            # Camera should now be free - verify it
             if not self.camera or not self.camera.isOpened():
                 logger.error("❌ Camera not available for registration")
                 with self.state_lock:
                     self.state.awaiting_registration = False
                 return False
             
-            # Clear buffer thoroughly since camera was just freed
+            # Clear buffer thoroughly
             logger.info("📷 Camera is free, clearing buffer...")
+            last_frame = None
             for i in range(10):
                 ret, frame = self.camera.read()
                 if ret and frame is not None:
                     logger.info(f"✅ Buffer clear {i+1}: Got frame {frame.shape}")
+                    last_frame = frame  # Keep the last good frame
                 time.sleep(0.1)
             
-            # Take the picture
-            logger.info("📸 Taking registration photo...")
-            success = FR.take_picture(name, self.camera)
+            if last_frame is None:
+                logger.error("❌ No valid frame captured during buffer clearing")
+                with self.state_lock:
+                    self.state.awaiting_registration = False
+                return False
+            
+            # Save the frame directly instead of calling FR.take_picture
+            logger.info("📸 Saving registration photo directly...")
+            success = self._save_registration_photo(name, last_frame)
             
             # Update state
             with self.state_lock:
@@ -2615,6 +2621,39 @@ class EnhancedRobotController:
             logger.error(f"❌ Registration error: {e}")
             with self.state_lock:
                 self.state.awaiting_registration = False
+            return False
+
+    def _save_registration_photo(self, name: str, frame) -> bool:
+        """Save registration photo directly from frame"""
+        try:
+            # Clean filename
+            clean_name = name.strip().replace(' ', '_').lower()
+            filename = f"{clean_name}.jpg"
+            filepath = os.path.join("images", filename)
+            
+            # Ensure images directory exists
+            os.makedirs("images", exist_ok=True)
+            
+            # Save image
+            result = cv2.imwrite(filepath, frame)
+            
+            if result and os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                logger.info(f"✅ Registration photo saved: {filepath} ({file_size} bytes)")
+                
+                # Reload face recognition data
+                if hasattr(FR, 'reload_face_data'):
+                    FR.reload_face_data()
+                elif hasattr(FR, 'load_face_data'):
+                    FR.load_face_data()
+                
+                return True
+            else:
+                logger.error(f"❌ Failed to save registration photo")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error saving registration photo: {e}")
             return False   
     def reset_face_recognition_state(self):
         """Reset face recognition state to properly restart 3-attempt cycle"""
