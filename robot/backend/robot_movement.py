@@ -2355,11 +2355,11 @@ class EnhancedRobotController:
             logger.error(f"Failed to start background tasks: {e}")
     
     def _unified_vision_loop(self):
-        """Unified vision processing loop with proper 3-attempt face recognition"""
+        """FIXED: Unified vision processing loop with proper face recognition"""
         last_user_check = time.time()
         last_gesture = "none"
         gesture_cooldown = time.time()
-        logger.info("🔍 Starting unified vision loop with FIXED 3-attempt face recognition")
+        logger.info("🔍 Starting unified vision loop with FIXED face recognition")
         
         while not self.shutdown_event.is_set():
             try:
@@ -2373,6 +2373,7 @@ class EnhancedRobotController:
                     frame = cv2.flip(frame, 1)
                     current_time = time.time()
                     
+                    # Hand detection with cooldown to prevent spam
                     if self.hand_detector:
                         frame_copy = frame.copy()
                         self.hand_detector.find_hands(frame_copy, draw=False)
@@ -2388,15 +2389,18 @@ class EnhancedRobotController:
                             if (gesture != "none" and 
                                 gesture != last_gesture and 
                                 current_time - gesture_cooldown > 2.0):
+                                
                                 with self.state_lock:
                                     self.state.hand_gesture = gesture
                                     self.state.last_speech_output = f"I see you're {gesture.replace('_', ' ')}!"
+                                    
                                 if self.config.enable_speech_synthesis and FACE_HELPER_AVAILABLE:
                                     threading.Thread(
                                         target=FR.speak, 
                                         args=(f"I see you're {gesture.replace('_', ' ')}!",),
                                         daemon=True
                                     ).start()
+                                
                                 logger.info(f"Hand gesture detected: {gesture}")
                                 last_gesture = gesture
                                 gesture_cooldown = current_time
@@ -2407,11 +2411,13 @@ class EnhancedRobotController:
                                         self.state.hand_gesture = "none"
                                 last_gesture = "none"
                     
+                    # FIXED: Face recognition using the correct method
                     with self.state_lock:
                         recognition_complete = self.state.recognition_complete
                         current_attempts = self.state.face_recognition_attempts
                         awaiting_registration = self.state.awaiting_registration
                     
+                    # Only try face recognition if conditions are met
                     if (current_time - last_user_check > 2.0 and 
                         FACE_HELPER_AVAILABLE and 
                         self.state.hand_gesture == "none" and 
@@ -2421,14 +2427,18 @@ class EnhancedRobotController:
                         
                         last_user_check = current_time
                         try:
-                            current_user = self._recognize_user_with_face_helper()
+                            # CORRECTED: Use the proper method with the current frame
+                            current_user = self._recognize_user_in_frame(frame)
+                            
                             if current_user and current_user != "Unknown":
+                                # SUCCESS: User recognized
                                 with self.state_lock:
                                     self.state.current_user = current_user
                                     self.state.last_speech_output = f"Hello {current_user}!"
                                     self.state.face_recognition_attempts = 0
                                     self.state.awaiting_registration = False
                                     self.state.recognition_complete = True
+                                    
                                     if self.config.enable_speech_synthesis:
                                         threading.Thread(
                                             target=FR.speak,
@@ -2436,31 +2446,43 @@ class EnhancedRobotController:
                                             daemon=True
                                         ).start()
                                     logger.info(f"✅ User recognized: {current_user}")
+                            
                             else:
+                                # ATTEMPT FAILED: User not recognized
                                 new_attempts = current_attempts + 1
                                 with self.state_lock:
                                     self.state.face_recognition_attempts = new_attempts
+                                
                                 logger.info(f"🔍 Face recognition attempt {new_attempts}/3 - No user found")
+                                
+                                # Check if we've reached max attempts
                                 if new_attempts >= 3:
                                     with self.state_lock:
                                         self.state.recognition_complete = True
                                         self.state.current_user = "Unknown"
+                                    
                                     logger.info("❌ Face recognition complete after 3 attempts - user can now choose options")
+                                    
                         except Exception as e:
                             logger.error(f"Face recognition error: {e}")
+                            # On error, still count as an attempt
                             new_attempts = current_attempts + 1
                             with self.state_lock:
                                 self.state.face_recognition_attempts = new_attempts
+                            
                             if new_attempts >= 3:
                                 with self.state_lock:
                                     self.state.recognition_complete = True
                                     self.state.current_user = "Unknown"
                     
+                    # Store current frame for web streaming
                     self.current_frame = frame.copy()
-                    time.sleep(0.033)
+                    time.sleep(0.033)  # ~30 FPS
+                    
                 else:
                     logger.warning("Camera not available")
                     time.sleep(0.5)
+                    
             except Exception as e:
                 logger.error(f"Unified vision processing error: {e}")
                 time.sleep(0.1)
@@ -2804,36 +2826,92 @@ class EnhancedRobotController:
             return None
     
     def register_new_user(self, name: str) -> bool:
-        """Register a new user with detailed logging and error handling"""
         if not FACE_HELPER_AVAILABLE:
             logger.error("❌ Face helper not available for registration")
             return False
+
         try:
             logger.info(f"🆔 Starting registration process for user: {name}")
+            
+            # Check if camera is available
             if not self.camera or not self.camera.isOpened():
                 logger.error("❌ Camera not available for registration")
                 return False
+            
             logger.info("📷 Camera is available and opened")
-            picture_success = FR.face_recognition_system.take_picture(name, self.camera)
+            
+            # CORRECTED: Use the correct face_helper method
+            # This will save to backend/images directory automatically
+            picture_success = FR.take_picture(name, self.camera)
+            
             if not picture_success:
                 logger.error(f"❌ Failed to take picture for {name}")
                 return False
+            
             logger.info(f"✅ Picture taken and face data reloaded for {name}")
+            
+            # Update robot state
             with self.state_lock:
                 self.state.current_user = name
                 self.state.face_recognition_attempts = 0
                 self.state.awaiting_registration = False
-                self.state.recognition_complete = True
+                self.state.recognition_complete = True  # Registration counts as completion
+            
             logger.info(f"🎉 Registration completed successfully for user: {name}")
             return True
+            
         except Exception as e:
             logger.error(f"❌ Registration error for {name}: {e}")
             import traceback
             logger.error(f"   Full traceback: {traceback.format_exc()}")
             return False
+
+    def _recognize_user_in_frame(self, frame):
+        """CORRECTED: Use face_helper to recognize user from current frame"""
+        if not FACE_HELPER_AVAILABLE:
+            return "Unknown"
+        
+        try:
+            # Use the face_recognition_system if available, otherwise fallback
+            if hasattr(FR, 'face_recognition_system'):
+                name, confidence = FR.face_recognition_system.recognize_face_in_frame(frame)
+                if name and name != "Unknown" and confidence > 0.4:
+                    logger.debug(f"Face recognized: {name} (confidence: {confidence:.3f})")
+                    return name
+                else:
+                    logger.debug(f"No face recognized (confidence: {confidence:.3f})")
+                    return "Unknown"
+            else:
+                # Fallback for simple face_helper
+                img = frame
+                imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+                imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+                
+                if FACE_RECOGNITION_AVAILABLE:
+                    faces_cur_frame = face_recognition.face_locations(imgS)
+                    encodes_cur_frame = face_recognition.face_encodings(imgS, faces_cur_frame)
+                    
+                    for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
+                        if not FR.encodeListKnown:
+                            return "Unknown"
+                        
+                        matches = face_recognition.compare_faces(FR.encodeListKnown, encode_face)
+                        face_distances = face_recognition.face_distance(FR.encodeListKnown, encode_face)
+                        
+                        if len(face_distances) > 0:
+                            match_index = np.argmin(face_distances)
+                            best_match_distance = face_distances[match_index]
+                            
+                            if best_match_distance <= 0.42 and matches[match_index]:
+                                name = FR.classNames[match_index].upper()
+                                return name
+                return "Unknown"
+                    
+        except Exception as e:
+            logger.error(f"Face recognition with face_helper error: {e}")
+            return "Unknown"
     
     def move(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
-        """Move robot in specified direction"""
         direction_map = {
             "up": "forward",
             "down": "backward", 
@@ -3145,7 +3223,7 @@ class EnhancedRobotController:
             except Exception as e:
                 logger.error(f"GPIO cleanup error: {e}")
         logger.info("Enhanced robot controller shutdown complete")
-
+    
     def _recognize_user_in_frame(self, frame):
         """Use face_helper to recognize user from current frame"""
         if not FACE_HELPER_AVAILABLE or not FACE_RECOGNITION_AVAILABLE:
