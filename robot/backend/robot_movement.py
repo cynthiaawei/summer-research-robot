@@ -1858,7 +1858,7 @@ except ImportError:
         class SimpleFaceHelper:
             def __init__(self):
                 # FIXED: Use backend/images directory (not facepics!)
-                self.images_path = os.path.join(os.path.dirname(__file__), 'images')
+                self.images_path = 'robot\backend\images'
                 self.cap = None
                 self.classNames = []
                 self.encodeListKnown = []
@@ -3201,23 +3201,7 @@ class EnhancedRobotController:
         for thread, name in threads_to_join:
             if thread and thread.is_alive():
                 logger.info(f"Waiting for {name} thread to finish...")
-                thread.join(timeout=2.0)    
-    def _recognize_user_in_frame(self, frame):
-        """Use face_helper to recognize user from current frame"""
-        if not FACE_HELPER_AVAILABLE or not FACE_RECOGNITION_AVAILABLE:
-            return "Unknown"
-        try:
-            name, confidence = FR.face_recognition_system.recognize_face_in_frame(frame)
-            if name and name != "Unknown" and confidence > 0.4:
-                logger.debug(f"Face recognized: {name} (confidence: {confidence:.3f})")
-                return name
-            else:
-                logger.debug(f"No face recognized (confidence: {confidence:.3f})")
-                return "Unknown"
-        except Exception as e:
-            logger.error(f"Face recognition with face_helper error: {e}")
-            return "Unknown"
-
+                thread.join(timeout=2.0)
 # Global enhanced robot controller instance
 _enhanced_robot_controller = None
 _enhanced_controller_lock = threading.Lock()
