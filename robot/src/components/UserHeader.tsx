@@ -14,6 +14,10 @@ const getUserName = (): string => {
 const setUserName = (name: string): void => {
   try {
     localStorage.setItem('robotUser', name);
+    // Dispatch event immediately after setting
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('userChanged'));
+    }
   } catch (error) {
     console.warn('LocalStorage not available:', error);
   }
@@ -21,14 +25,27 @@ const setUserName = (name: string): void => {
 
 const logout = (): void => {
   try {
+    // FIXED: Set to Guest first, then dispatch event
     localStorage.setItem('robotUser', 'Guest');
+    
+    // Dispatch custom event for same-tab updates
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('userChanged'));
+    }
+    
+    // FIXED: Small delay to ensure state updates, then navigate
+    setTimeout(() => {
+      if (typeof window !== 'undefined') {
+        window.location.href = '/';
+      }
+    }, 100);
+    
   } catch (error) {
     console.warn('LocalStorage not available:', error);
-  }
-  
-  // Use window.location for more reliable navigation
-  if (typeof window !== 'undefined') {
-    window.location.href = '/';
+    // Fallback: direct navigation
+    if (typeof window !== 'undefined') {
+      window.location.href = '/';
+    }
   }
 };
 
@@ -40,11 +57,14 @@ interface UserHeaderProps {
 export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => {
   const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState<string>('Guest');
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // Update user name when component mounts and on storage changes
   useEffect(() => {
     const updateUserName = () => {
-      setCurrentUser(getUserName());
+      const userName = getUserName();
+      console.log('UserHeader: Updating user name to:', userName);
+      setCurrentUser(userName);
     };
 
     // Initial load
@@ -53,12 +73,14 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
     // Listen for storage changes (when user logs in/out in other tabs)
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === 'robotUser') {
+        console.log('UserHeader: Storage changed, new value:', e.newValue);
         updateUserName();
       }
     };
 
     // Listen for custom events (when user logs in/out in same tab)
     const handleCustomUserChange = () => {
+      console.log('UserHeader: Custom user change event received');
       updateUserName();
     };
 
@@ -73,10 +95,39 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
 
   const isGuest = currentUser === 'Guest';
 
-  const handleLogout = () => {
-    logout();
-    // Dispatch custom event for same-tab updates
-    window.dispatchEvent(new CustomEvent('userChanged'));
+  const handleLogout = async () => {
+    if (isLoggingOut) return; // Prevent double-clicks
+    
+    console.log('UserHeader: Logout initiated');
+    setIsLoggingOut(true);
+    
+    try {
+      // FIXED: Clear user data properly
+      logout();
+      
+      // FIXED: Also reset any face recognition state if possible
+      try {
+        // Try to reset face recognition state via API call
+        const response = await fetch(`http://${window.location.hostname}:8000/api/reset-face-recognition`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        
+        if (response.ok) {
+          console.log('UserHeader: Face recognition state reset successfully');
+        } else {
+          console.warn('UserHeader: Failed to reset face recognition state');
+        }
+      } catch (error) {
+        console.warn('UserHeader: Could not reset face recognition state:', error);
+      }
+      
+    } catch (error) {
+      console.error('UserHeader: Logout error:', error);
+      setIsLoggingOut(false);
+    }
   };
 
   const headerStyle = {
@@ -109,12 +160,15 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
     padding: '0.5rem 1rem',
     borderRadius: '8px',
     border: 'none',
-    cursor: 'pointer',
-    background: 'linear-gradient(135deg, #f56565, #e53e3e)',
+    cursor: isLoggingOut ? 'not-allowed' : 'pointer',
+    background: isLoggingOut 
+      ? 'linear-gradient(135deg, #a0aec0, #718096)' 
+      : 'linear-gradient(135deg, #f56565, #e53e3e)',
     color: 'white',
     fontSize: '0.9rem',
     fontWeight: '600' as const,
-    transition: 'all 0.3s ease'
+    transition: 'all 0.3s ease',
+    opacity: isLoggingOut ? 0.6 : 1
   };
 
   const statusStyle = {
@@ -149,18 +203,23 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
         {showLogout && (
           <button
             onClick={handleLogout}
+            disabled={isLoggingOut}
             style={logoutButtonStyle}
             onMouseEnter={(e) => {
-              e.currentTarget.style.transform = 'translateY(-2px)';
-              e.currentTarget.style.boxShadow = '0 4px 8px rgba(245, 101, 101, 0.4)';
+              if (!isLoggingOut) {
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 4px 8px rgba(245, 101, 101, 0.4)';
+              }
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = 'none';
+              if (!isLoggingOut) {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = 'none';
+              }
             }}
-            title="Return to face recognition"
+            title={isLoggingOut ? "Logging out..." : "Return to face recognition"}
           >
-            🚪 Logout
+            {isLoggingOut ? '🔄 Logging out...' : '🚪 Logout'}
           </button>
         )}
       </div>
@@ -171,10 +230,7 @@ export const UserHeader: React.FC<UserHeaderProps> = ({ showLogout = true }) => 
 // Enhanced setUserName that triggers updates
 const setUserNameWithUpdate = (name: string): void => {
   setUserName(name);
-  // Dispatch custom event to update UserHeader immediately
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('userChanged'));
-  }
+  console.log('setUserNameWithUpdate: Set user to:', name);
 };
 
 // Export enhanced functions
