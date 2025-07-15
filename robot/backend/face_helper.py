@@ -160,89 +160,99 @@ class FaceRecognitionSystem:
         return valid_encodings
     
     def take_picture(self, name, camera):
-        """FIXED: Take a picture with DIRECT PATH - guaranteed to work"""
+        """DEBUG VERSION: Find exactly where it's failing"""
         try:
-            logger.info(f"📷 Starting picture capture for user: {name}")
-            logger.info(f"📁 Saving to DIRECT PATH: {self.images_path}")
+            logger.info(f"📷 DEBUG: Starting picture capture for user: {name}")
+            logger.info(f"📁 DEBUG: Saving to path: {self.images_path}")
+            logger.info(f"📁 DEBUG: Absolute path: {os.path.abspath(self.images_path)}")
             
             if not camera:
-                logger.error("❌ No camera provided")
+                logger.error("❌ DEBUG: No camera provided")
                 return False
             
             if not camera.isOpened():
-                logger.error("❌ Camera is not opened")
+                logger.error("❌ DEBUG: Camera is not opened")
                 return False
             
-            # Take multiple frames and use the best one
-            best_frame = None
-            best_face_count = 0
+            logger.info("📷 DEBUG: Camera is available, starting frame capture...")
             
-            for attempt in range(5):  # Try 5 frames
-                success, image = camera.read()
-                if not success or image is None:
-                    continue
-                
-                # Check if this frame has faces
-                img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                face_locations = face_recognition.face_locations(img_rgb)
-                
-                if len(face_locations) > best_face_count:
-                    best_face_count = len(face_locations)
-                    best_frame = image.copy()
-                
-                if best_face_count > 0:
-                    break
+            # Simplified frame capture - just take one frame
+            success, image = camera.read()
+            logger.info(f"📷 DEBUG: Frame capture result - Success: {success}, Image is None: {image is None}")
             
-            if best_frame is None:
-                logger.error("❌ No valid frame captured")
+            if not success or image is None:
+                logger.error("❌ DEBUG: Failed to capture frame")
                 return False
             
-            if best_face_count == 0:
-                logger.warning("⚠️ No faces detected in captured frames")
-                # Continue anyway, might work for recognition
+            logger.info(f"📷 DEBUG: Got frame with shape: {image.shape}")
+            
+            # Skip face detection for now - just save the image
+            best_frame = image.copy()
             
             # Clean the name for filename
             clean_name = name.strip().replace(' ', '_').lower()
             filename = f'{clean_name}.jpg'
-            
-            # Use DIRECT ABSOLUTE PATH
             filepath = os.path.join(self.images_path, filename)
             
-            logger.info(f"💾 DIRECT SAVE PATH: {filepath}")
+            logger.info(f"💾 DEBUG: Clean name: {clean_name}")
+            logger.info(f"💾 DEBUG: Filename: {filename}")
+            logger.info(f"💾 DEBUG: Full filepath: {filepath}")
+            logger.info(f"💾 DEBUG: Absolute filepath: {os.path.abspath(filepath)}")
             
-            # Ensure the directory exists (create if needed)
+            # Ensure the directory exists
+            logger.info("📁 DEBUG: Creating directory...")
             os.makedirs(self.images_path, exist_ok=True)
+            logger.info(f"📁 DEBUG: Directory exists after creation: {os.path.exists(self.images_path)}")
+            
+            # Test write permissions
+            try:
+                test_file = os.path.join(self.images_path, "test_write.tmp")
+                with open(test_file, 'w') as f:
+                    f.write("test")
+                os.remove(test_file)
+                logger.info("✅ DEBUG: Write permission test passed")
+            except Exception as e:
+                logger.error(f"❌ DEBUG: Write permission test failed: {e}")
+                return False
             
             # Save the image
+            logger.info("💾 DEBUG: Attempting cv2.imwrite...")
             result = cv2.imwrite(filepath, best_frame)
+            logger.info(f"💾 DEBUG: cv2.imwrite returned: {result}")
             
-            if result and os.path.exists(filepath):
+            # Check if file exists
+            file_exists = os.path.exists(filepath)
+            logger.info(f"💾 DEBUG: File exists after save: {file_exists}")
+            
+            if file_exists:
                 file_size = os.path.getsize(filepath)
-                logger.info(f"✅ Picture saved successfully for {name}")
+                logger.info(f"💾 DEBUG: File size: {file_size} bytes")
+            
+            if result and file_exists:
+                file_size = os.path.getsize(filepath)
+                logger.info(f"✅ DEBUG: SUCCESS! Picture saved for {name}")
                 logger.info(f"   📁 FULL PATH: {filepath}")
                 logger.info(f"   📏 Size: {file_size} bytes")
-                logger.info(f"   👥 Faces detected: {best_face_count}")
                 
-                # IMPORTANT: Reload face data to include new user
-                self.load_face_data()
-                
-                # Verify the user was loaded
-                if clean_name in self.classNames:
-                    logger.info(f"✅ User {name} successfully added to face recognition database")
-                else:
-                    logger.warning(f"⚠️ User {name} was saved but not loaded into database")
+                # Try to reload face data
+                try:
+                    logger.info("🔄 DEBUG: Reloading face data...")
+                    self.load_face_data()
+                    logger.info(f"🔄 DEBUG: Face data reloaded. Known users: {self.classNames}")
+                except Exception as e:
+                    logger.error(f"❌ DEBUG: Failed to reload face data: {e}")
                 
                 return True
             else:
-                logger.error(f"❌ Failed to save image to {filepath}")
+                logger.error(f"❌ DEBUG: FAILED to save image")
                 logger.error(f"   cv2.imwrite result: {result}")
-                logger.error(f"   File exists: {os.path.exists(filepath)}")
+                logger.error(f"   File exists: {file_exists}")
                 return False
                 
         except Exception as e:
-            logger.error(f"❌ Error taking picture for {name}: {e}")
+            logger.error(f"❌ DEBUG: Exception in take_picture: {e}")
             import traceback
-            logger.error(f"   Traceback: {traceback.format_exc()}")
+            logger.error(f"   DEBUG: Full traceback:\n{traceback.format_exc()}")
             return False
     
     def recognize_face_in_frame(self, img):
