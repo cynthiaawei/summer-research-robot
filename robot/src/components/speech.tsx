@@ -418,6 +418,7 @@ const styles = {
   }
 };
 
+
 const Speech: React.FC = () => {
   const [response, setResponse] = useState<{ message: string; isError: boolean }>({ message: '', isError: false });
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
@@ -788,3 +789,4 @@ const Speech: React.FC = () => {
     </div>
   );
 };
+export default Speech;
