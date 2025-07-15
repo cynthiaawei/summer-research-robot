@@ -42,7 +42,7 @@ type WSMessage =
   | { type: 'ping' }
   | { type: 'pong' };
 
-// Enhanced Camera Component (same as in Speech component)
+// Enhanced Camera Component
 const CameraFeed: React.FC<{ showCamera: boolean; isConnected: boolean }> = ({ showCamera, isConnected }) => {
   const cameraRef = useRef<HTMLImageElement>(null);
   const [cameraStatus, setCameraStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
@@ -152,7 +152,6 @@ const TextButton: React.FC = () => {
 
   // Enhanced state
   const [speechText, setSpeechText] = useState('');
-  const [userRegistrationName, setUserRegistrationName] = useState('');
   const [conversationHistory, setConversationHistory] = useState<string[]>([]);
   const [showCamera, setShowCamera] = useState(false);
   const [commandPresets] = useState([
@@ -216,6 +215,8 @@ const TextButton: React.FC = () => {
           break;
         case 'text_command_processed':
         case 'text_command_result':
+          // FIXED: Show AI response in the textbox
+          setText(`🤖 Robot: ${msg.data.message}`);
           setResponse({ message: msg.data.message, isError: !msg.data.success });
           addToConversationHistory(`📋 Response: ${msg.data.message}`);
           setIsLoading(false);
@@ -240,10 +241,12 @@ const TextButton: React.FC = () => {
           setResponse({ message: regMsg, isError: !msg.data.success });
           addToConversationHistory(regMsg);
           if (msg.data.success) {
-            setUserRegistrationName('');
+            setSpeechText('');
           }
           break;
         case 'conversation_response':
+          // FIXED: Show conversation response in the textbox
+          setText(`🤖 Robot: ${msg.data.response}`);
           const convMsg = `💬 Robot: ${msg.data.response}`;
           setResponse({ message: convMsg, isError: false });
           addToConversationHistory(convMsg);
@@ -350,6 +353,8 @@ const TextButton: React.FC = () => {
         `http://${window.location.hostname}:8000/api/text-command`,
         { text: cmd }
       );
+      // FIXED: Show HTTP response in textbox too
+      setText(`🤖 Robot: ${res.data.message}`);
       setResponse({ message: res.data.message, isError: !res.data.success });
       addToConversationHistory(`📋 HTTP Response: ${res.data.message}`);
     } catch (err) {
@@ -364,6 +369,7 @@ const TextButton: React.FC = () => {
         msg = String(err);
       }
 
+      setText(`❌ Error: ${msg}`);
       setResponse({ message: msg, isError: true });
     } finally {
       setIsLoading(false);
@@ -377,9 +383,9 @@ const TextButton: React.FC = () => {
       return;
     }
 
+    // Don't clear the text immediately - let the response replace it
     setIsLoading(true);
     addToConversationHistory(`📝 You typed: "${cmd}"`);
-    setText('');
 
     // Try WebSocket first, fallback to HTTP
     if (connectionStatus === 'connected') {
@@ -405,12 +411,6 @@ const TextButton: React.FC = () => {
     sendWebSocketMessage('recognize_user', { mode: 'text' });
   };
 
-  const registerUser = () => {
-    if (userRegistrationName.trim()) {
-      sendWebSocketMessage('register_user', { name: userRegistrationName.trim() });
-    }
-  };
-
   const startConversation = () => {
     sendWebSocketMessage('conversation_mode', { mode: 'text' });
   };
@@ -428,6 +428,11 @@ const TextButton: React.FC = () => {
       e.preventDefault();
       handleSubmit();
     }
+  };
+
+  // FIXED: Clear the textbox for new input
+  const clearTextbox = () => {
+    setText('');
   };
 
   return (
@@ -488,20 +493,36 @@ const TextButton: React.FC = () => {
           </div>
         </div>
 
-        {/* User Registration */}
+        {/* MAIN CONVERSATION INTERFACE */}
         <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>📝 User Registration</h3>
-          <div style={styles.inputRow}>
-            <input
-              type="text"
-              placeholder="Enter your name to register"
-              value={userRegistrationName}
-              onChange={(e) => setUserRegistrationName(e.target.value)}
-              style={styles.input}
+          <h3 style={styles.sectionTitle}>💬 Interactive Chat Interface</h3>
+          
+          <div style={styles.inputGroup}>
+            <textarea
+              placeholder="Type your command or question here..."
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={handleKeyDown}
+              style={styles.mainTextarea}
+              rows={3}
+              disabled={isLoading}
             />
-            <button onClick={registerUser} style={styles.primaryBtn}>
-              Register New User
-            </button>
+            <div style={styles.buttonGroup}>
+              <button
+                onClick={handleSubmit}
+                style={styles.primaryBtn}
+                disabled={isLoading || !text.trim()}
+              >
+                {isLoading ? '⏳ Processing...' : '📤 Send'}
+              </button>
+              <button
+                onClick={clearTextbox}
+                style={styles.clearInputBtn}
+                disabled={isLoading}
+              >
+                🗑️ Clear
+              </button>
+            </div>
           </div>
         </div>
 
@@ -565,30 +586,6 @@ const TextButton: React.FC = () => {
           </div>
         </div>
 
-        {/* Loading Indicator */}
-        {isLoading && (
-          <div style={styles.loadingMessage}>
-            <div style={styles.spinner}></div>
-            Processing command…
-          </div>
-        )}
-
-        {/* Response Display */}
-        {!isLoading && response.message && (
-          <div style={{
-            marginTop: '1rem',
-            padding: '1rem',
-            border: '2px solid',
-            borderRadius: 12,
-            fontSize: '0.9rem',
-            textAlign: 'left' as const,
-            background: response.isError ? '#fee2e2' : '#d1fae5',
-            borderColor: response.isError ? '#f87171' : '#34d399'
-          }}>
-            <strong>{response.isError ? 'Error:' : 'Response:'}</strong> {response.message}
-          </div>
-        )}
-
         {/* Enhanced Status Display */}
         {status && (
           <div style={styles.statusCard}>
@@ -633,6 +630,8 @@ const TextButton: React.FC = () => {
         <div style={styles.examples}>
           <h4 style={styles.examplesTitle}>📋 Enhanced Text Control Guide:</h4>
           <ul style={styles.examplesList}>
+            <li><strong>Interactive Chat:</strong> Type commands or questions in the main textbox</li>
+            <li><strong>AI Responses:</strong> Robot replies appear directly in the textbox</li>
             <li><strong>Movement Commands:</strong> "go forward 3 seconds", "turn left", "move backward 1 second"</li>
             <li><strong>Complex Commands:</strong> "move left 2 seconds then turn right"</li>
             <li><strong>Stop Command:</strong> "stop" (works immediately)</li>
@@ -715,6 +714,27 @@ const styles = {
     alignItems: 'center',
     flexWrap: 'wrap' as const
   },
+  inputGroup: {
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: '1rem'
+  },
+  buttonGroup: {
+    display: 'flex',
+    gap: '0.5rem',
+    justifyContent: 'center'
+  },
+  mainTextarea: {
+    width: '100%',
+    padding: '1rem',
+    borderRadius: '12px',
+    border: '2px solid #e2e8f0',
+    fontSize: '1rem',
+    resize: 'vertical' as const,
+    minHeight: '80px',
+    boxSizing: 'border-box' as const,
+    fontFamily: 'inherit'
+  },
   primaryBtn: {
     padding: '0.75rem 1.5rem',
     borderRadius: '8px',
@@ -748,17 +768,6 @@ const styles = {
     fontWeight: '600',
     transition: 'all 0.3s ease'
   },
-  dangerBtn: {
-    padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
-    border: 'none',
-    cursor: 'pointer',
-    background: 'linear-gradient(135deg, #f56565, #e53e3e)',
-    color: 'white',
-    fontSize: '0.9rem',
-    fontWeight: '600',
-    transition: 'all 0.3s ease'
-  },
   clearBtn: {
     padding: '0.5rem 1rem',
     borderRadius: '6px',
@@ -768,6 +777,17 @@ const styles = {
     color: 'white',
     fontSize: '0.8rem',
     fontWeight: '600'
+  },
+  clearInputBtn: {
+    padding: '0.75rem 1rem',
+    borderRadius: '8px',
+    border: 'none',
+    cursor: 'pointer',
+    background: '#718096',
+    color: 'white',
+    fontSize: '0.9rem',
+    fontWeight: '600',
+    transition: 'all 0.3s ease'
   },
   retryBtn: {
     padding: '0.5rem 1rem',
@@ -799,24 +819,6 @@ const styles = {
     border: '2px solid #e2e8f0',
     fontSize: '1rem',
     minWidth: '200px'
-  },
-  mainInput: {
-    width: '100%',
-    padding: '1rem',
-    fontSize: '1rem',
-    borderRadius: 12,
-    border: '2px solid #e2e8f0',
-    marginBottom: '1rem',
-    boxSizing: 'border-box' as const,
-    transition: 'all 0.3s ease'
-  },
-  label: {
-    fontSize: '1.1rem',
-    fontWeight: 600,
-    marginBottom: '0.5rem',
-    display: 'block',
-    textAlign: 'left' as const,
-    color: '#2d3748'
   },
   presetGrid: {
     display: 'grid',
@@ -899,18 +901,6 @@ const styles = {
     textAlign: 'center' as const,
     color: '#a0aec0',
     fontStyle: 'italic'
-  },
-  loadingMessage: {
-    color: '#4a5568',
-    fontStyle: 'italic',
-    marginBottom: '1rem',
-    padding: '1rem',
-    background: '#f0f4f8',
-    borderRadius: '8px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '1rem'
   },
   statusCard: {
     marginTop: '1.5rem',

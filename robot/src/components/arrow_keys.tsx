@@ -30,7 +30,6 @@ type WSMessage =
   | { type: 'status_update'; data: EnhancedRobotStatus }
   | { type: 'direction_executed'; data: { direction: string; success: boolean } }
   | { type: 'robot_stopped'; data: { message: string } }
-  | { type: 'speech_output'; data: { text: string; success: boolean } }
   | { type: 'obstacle_reset'; data: { message: string; success: boolean } }
   | { type: 'error'; data: { message: string } }
   | { type: 'ping' }
@@ -41,11 +40,9 @@ const ArrowKeys: React.FC = () => {
   const [status, setStatus] = useState<EnhancedRobotStatus | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   
-  // Enhanced state
-  const [showCamera, setShowCamera] = useState(false);
-  const [speechText, setSpeechText] = useState('');
-  const [autoMode, setAutoMode] = useState(false);
+  // Simplified state - only movement related
   const [movementHistory, setMovementHistory] = useState<string[]>([]);
+  const [showCamera, setShowCamera] = useState(false);
 
   // Use refs to avoid stale closure issues and prevent infinite loops
   const wsRef = useRef<WebSocket | null>(null);
@@ -105,9 +102,6 @@ const ArrowKeys: React.FC = () => {
           setResponse(data.data.message);
           addToMovementHistory('🛑 Robot stopped');
           break;
-        case 'speech_output':
-          setResponse(`🤖 Robot spoke: "${data.data.text}"`);
-          break;
         case 'obstacle_reset':
           setResponse(data.data.message);
           break;
@@ -124,7 +118,7 @@ const ArrowKeys: React.FC = () => {
     if (!mountedRef.current) return;
     console.log('✅ Arrow Keys WebSocket connected');
     setConnectionStatus('connected');
-    setResponse('Connected to enhanced robot');
+    setResponse('Connected to robot');
     reconnectCountRef.current = 0;
   }, []);
 
@@ -214,19 +208,6 @@ const ArrowKeys: React.FC = () => {
     addToMovementHistory('🛑 Stop command sent');
   }, [sendWebSocketMessage, addToMovementHistory]);
 
-  const sendSpeech = useCallback(() => {
-    if (speechText.trim()) {
-      sendWebSocketMessage('speech_command', { text: speechText.trim() });
-      setSpeechText('');
-    }
-  }, [speechText, sendWebSocketMessage]);
-
-  const toggleAutoMode = useCallback(() => {
-    const newMode = !autoMode;
-    setAutoMode(newMode);
-    sendWebSocketMessage('set_interaction_mode', { mode: newMode ? 'auto' : 'manual' });
-  }, [autoMode, sendWebSocketMessage]);
-
   const resetObstacle = useCallback(() => {
     sendWebSocketMessage('reset_obstacle');
     setResponse('Obstacle reset requested...');
@@ -268,8 +249,8 @@ const ArrowKeys: React.FC = () => {
       <UserHeader />
 
       <div style={styles.card}>
-        <h2 style={styles.title}>Enhanced Arrow Key Control</h2>
-        <p style={styles.subtitle}>Direct robot control with camera and speech</p>
+        <h2 style={styles.title}>Arrow Key Control</h2>
+        <p style={styles.subtitle}>Direct robot movement control</p>
         
         {/* Connection Status */}
         <div style={styles.connectionIndicator}>
@@ -284,21 +265,15 @@ const ArrowKeys: React.FC = () => {
           </span>
         </div>
 
-        {/* Camera Controls */}
+        {/* Camera Controls - SIMPLIFIED */}
         <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>👁️ Camera & Controls</h3>
+          <h3 style={styles.sectionTitle}>📷 Camera Feed</h3>
           <div style={styles.buttonRow}>
             <button
               onClick={() => setShowCamera(!showCamera)}
               style={showCamera ? styles.activeBtn : styles.primaryBtn}
             >
               {showCamera ? '📷 Hide Camera' : '📷 Show Camera'}
-            </button>
-            <button
-              onClick={toggleAutoMode}
-              style={autoMode ? styles.activeBtn : styles.secondaryBtn}
-            >
-              {autoMode ? '🤖 Auto Mode ON' : '🤖 Auto Mode OFF'}
             </button>
           </div>
 
@@ -318,35 +293,7 @@ const ArrowKeys: React.FC = () => {
           </div>
         </div>
 
-        {/* Speech Controls */}
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>📢 Speech Control</h3>
-          <div style={styles.inputRow}>
-            <input
-              type="text"
-              placeholder="Enter text for robot to speak"
-              value={speechText}
-              onChange={(e) => setSpeechText(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendSpeech()}
-              style={styles.input}
-            />
-            <button
-              onClick={sendSpeech}
-              style={styles.primaryBtn}
-              disabled={!speechText.trim()}
-            >
-              🗣️ Speak
-            </button>
-          </div>
-          
-          {status?.last_speech_output && (
-            <div style={styles.lastSpeech}>
-              <strong>🗣️ Last Robot Speech:</strong> "{status.last_speech_output}"
-            </div>
-          )}
-        </div>
-
-        {/* Movement Controls */}
+        {/* Movement Controls - MAIN FEATURE */}
         <div style={styles.section}>
           <h3 style={styles.sectionTitle}>🎮 Movement Controls</h3>
           <div style={styles.gridStyle}>
@@ -466,7 +413,7 @@ const ArrowKeys: React.FC = () => {
             </div>
           )}
           
-          {/* Enhanced Status Display */}
+          {/* Robot Status Display */}
           {status && (
             <div style={styles.statusCard}>
               <h3 style={styles.statusTitle}>🤖 Robot Status</h3>
@@ -477,7 +424,6 @@ const ArrowKeys: React.FC = () => {
                 }}>{status.status}</span></div>
                 <div><strong>Current User:</strong> {status.current_user}</div>
                 <div><strong>Hand Gesture:</strong> {status.hand_gesture}</div>
-                <div><strong>Interaction Mode:</strong> {status.interaction_mode}</div>
                 <div><strong>Camera:</strong> <span style={{
                   color: status.camera_active ? '#38a169' : '#e53e3e'
                 }}>{status.camera_active ? 'Active' : 'Inactive'}</span></div>
@@ -491,26 +437,17 @@ const ArrowKeys: React.FC = () => {
                 <div><strong>Uptime:</strong> {status.uptime?.toFixed(1)}s</div>
                 <div><strong>GPIO:</strong> {status.gpio_available ? '✅' : '❌'}</div>
               </div>
-
-              <div style={styles.featureStatus}>
-                <div><strong>Available Features:</strong></div>
-                <div>Face Recognition: {status.face_recognition_available ? '✅' : '❌'}</div>
-                <div>Speech Recognition: {status.speech_recognition_available ? '✅' : '❌'}</div>
-                <div>Hand Detection: {status.mediapipe_available ? '✅' : '❌'}</div>
-                <div>Camera: {status.camera_active ? '✅' : '❌'}</div>
-              </div>
             </div>
           )}
         </div>
 
         {/* Instructions */}
         <div style={styles.instructions}>
-          <strong>📋 Enhanced Arrow Key Instructions:</strong>
+          <strong>📋 Arrow Key Instructions:</strong>
           <ul style={styles.instructionsList}>
             <li><strong>Movement:</strong> Press and hold arrow buttons to move, release to stop automatically</li>
             <li><strong>Emergency:</strong> Use STOP button for immediate halt</li>
-            <li><strong>Speech:</strong> Enter text and click "Speak" to make robot talk</li>
-            <li><strong>Auto Mode:</strong> Robot responds to hand gestures and face recognition</li>
+            <li><strong>Camera:</strong> Toggle camera feed to see robot's view</li>
             <li><strong>Sensors:</strong> 1=Front, 2=Left, 3=Right obstacle detection</li>
             <li><strong>History:</strong> Track recent movement commands</li>
           </ul>
@@ -592,29 +529,12 @@ const styles = {
     flexWrap: 'wrap' as const,
     marginBottom: '1rem'
   },
-  inputRow: {
-    display: 'flex',
-    gap: '0.5rem',
-    alignItems: 'center',
-    flexWrap: 'wrap' as const
-  },
   primaryBtn: {
     padding: '0.75rem 1.5rem',
     borderRadius: '8px',
     border: 'none',
     cursor: 'pointer',
     background: 'linear-gradient(135deg, #667eea, #764ba2)',
-    color: 'white',
-    fontSize: '0.9rem',
-    fontWeight: '600',
-    transition: 'all 0.3s ease'
-  },
-  secondaryBtn: {
-    padding: '0.75rem 1.5rem',
-    borderRadius: '8px',
-    border: 'none',
-    cursor: 'pointer',
-    background: 'linear-gradient(135deg, #48bb78, #38a169)',
     color: 'white',
     fontSize: '0.9rem',
     fontWeight: '600',
@@ -641,14 +561,6 @@ const styles = {
     fontSize: '0.8rem',
     fontWeight: '600'
   },
-  input: {
-    flex: 1,
-    padding: '0.75rem',
-    borderRadius: '8px',
-    border: '2px solid #e2e8f0',
-    fontSize: '1rem',
-    minWidth: '200px'
-  },
   cameraContainer: {
     textAlign: 'center' as const,
     marginTop: '1rem'
@@ -666,14 +578,6 @@ const styles = {
     marginTop: '1rem',
     fontSize: '0.9rem',
     color: '#4a5568'
-  },
-  lastSpeech: {
-    marginTop: '1rem',
-    background: '#e6fffa',
-    padding: '0.75rem',
-    borderRadius: '8px',
-    fontSize: '0.9rem',
-    border: '1px solid #38b2ac'
   },
   gridStyle: {
     display: 'flex',
@@ -792,13 +696,6 @@ const styles = {
     gap: '0.5rem',
     fontSize: '0.9rem',
     marginBottom: '1rem'
-  },
-  featureStatus: {
-    fontSize: '0.8rem',
-    color: '#718096',
-    background: '#f0f4f8',
-    padding: '0.75rem',
-    borderRadius: '6px'
   },
   instructions: {
     marginTop: '2rem',
