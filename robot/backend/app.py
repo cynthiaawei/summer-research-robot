@@ -55,7 +55,22 @@ logging.basicConfig(
         logging.FileHandler('robot_backend.log', mode='a')  # Keep log file
     ]
 )
+registration_in_progress = False
+registration_lock = threading.Lock()
 
+def set_registration_state(in_progress: bool):
+    """Set global registration state"""
+    global registration_in_progress
+    with registration_lock:
+        registration_in_progress = in_progress
+        logger.info(f"📷 Registration state changed: {in_progress}")
+
+def is_registration_in_progress():
+    """Check if registration is in progress"""
+    global registration_in_progress
+    with registration_lock:
+        return registration_in_progress
+    
 app = FastAPI(
     title="Enhanced Robot Control API", 
     description="Web interface for omni-wheel robot with face recognition and speech"
@@ -434,41 +449,51 @@ async def camera_stream():
         raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
     
     def generate_frames():
-        """Generate camera frames with robust error handling"""
         frame_count = 0
         last_frame_time = time.time()
-        max_failures = 20  # Increased failure tolerance
+        max_failures = 20
         failure_count = 0
         
         logger.info("📹 Starting camera stream...")
         
         while True:
             try:
+                # IMMEDIATE CHECK: Stop if registration starts
+                if is_registration_in_progress():
+                    logger.info("📹 STOPPING camera stream - Registration started!")
+                    break
+                
+                # Also check robot state
+                status = robot_movement.get_status()
+                if status.get('awaiting_registration', False):
+                    logger.info("📹 STOPPING camera stream - Robot awaiting registration!")
+                    break
+                
                 frame_bytes = robot_movement.get_camera_frame()
                 current_time = time.time()
                 
                 if frame_bytes:
                     frame_count += 1
                     last_frame_time = current_time
-                    failure_count = 0  # Reset failure count on success
+                    failure_count = 0
                     
                     yield (b'--frame\r\n'
-                           b'Content-Type: image/jpeg\r\n'
-                           b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' + 
-                           frame_bytes + b'\r\n')
+                        b'Content-Type: image/jpeg\r\n'
+                        b'Content-Length: ' + str(len(frame_bytes)).encode() + b'\r\n\r\n' + 
+                        frame_bytes + b'\r\n')
                     
-                    # Limit frame rate to ~15 FPS to reduce load
-                    time.sleep(0.067)
+                    # Check again after each frame
+                    if is_registration_in_progress():
+                        logger.info("📹 STOPPING camera stream mid-frame - Registration detected!")
+                        break
+                    
+                    time.sleep(0.067)  # ~15 FPS
                 else:
                     failure_count += 1
-                    
-                    # If no frame for 10 seconds or too many failures, break the stream
                     if (current_time - last_frame_time > 10.0) or (failure_count > max_failures):
                         logger.warning(f"📹 Camera stream ending: no frames for {current_time - last_frame_time:.1f}s or {failure_count} failures")
                         break
-                    
-                    # Send a small delay and try again
-                    time.sleep(0.2)  # Longer delay when no frame
+                    time.sleep(0.2)
                     
             except GeneratorExit:
                 logger.info("📹 Camera stream generator exited normally")
@@ -479,24 +504,9 @@ async def camera_stream():
                 if failure_count > max_failures:
                     logger.error("📹 Too many camera failures, ending stream")
                     break
-                time.sleep(0.5)  # Longer delay on error
-    
-    try:
-        return StreamingResponse(
-            generate_frames(), 
-            media_type="multipart/x-mixed-replace; boundary=frame",
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-                "Access-Control-Allow-Origin": "*"
-            }
-        )
-    except Exception as e:
-        logger.error(f"❌ Camera stream initialization error: {e}")
-        logger.error(f"📊 Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Camera stream error: {str(e)}")
-
+                time.sleep(0.5)
+        
+        logger.info(f"📹 Camera stream ended (streamed {frame_count} frames)")
 @app.post("/api/text-command")
 async def process_text_command(text_command: TextCommand):
     """Process natural language text command with error handling"""
@@ -610,29 +620,62 @@ async def recognize_user(mode: str = "auto"):
 
 @app.post("/api/register-user")
 async def register_user(user_registration: UserRegistration):
-    """Register a new user with enhanced error handling"""
+    """Register user with stream stopping"""
     try:
+        # STEP 1: Immediately stop all camera streams
+        logger.info(f"🛑 STOPPING all camera streams for registration: {user_registration.name}")
+        set_registration_state(True)
+        
+        # STEP 2: Wait for streams to stop
+        await asyncio.sleep(0.5)
+        
+        # STEP 3: Notify all clients about registration starting
+        await manager.broadcast(json.dumps({
+            "type": "registration_started",
+            "data": {"name": user_registration.name, "message": "Camera stopped for registration"}
+        }))
+        
+        # STEP 4: Perform registration
         if not robot_movement_available:
+            set_registration_state(False)
             raise HTTPException(status_code=503, detail="Enhanced robot movement module not available")
         
         success = robot_movement.register_new_user(user_registration.name)
         
-        manager.mark_status_changed()
+        # STEP 5: Re-enable camera streams
+        set_registration_state(False)
+        
+        # STEP 6: Notify clients about completion
         await manager.broadcast(json.dumps({
-            "type": "user_registered",
-            "data": {"name": user_registration.name, "success": success}
+            "type": "registration_completed",
+            "data": {
+                "name": user_registration.name, 
+                "success": success,
+                "message": "Registration completed - camera restarted"
+            }
         }))
         
         if success:
+            # STEP 7: Tell clients to restart camera streams
+            await manager.broadcast(json.dumps({
+                "type": "restart_camera_stream",
+                "data": {"message": "Registration successful, restart camera stream"}
+            }))
+            
             return {"success": True, "message": f"User {user_registration.name} registered successfully"}
         else:
             return {"success": False, "message": f"Failed to register user {user_registration.name}"}
             
     except HTTPException:
-        raise
+        raise  # Re-raise HTTP exceptions
     except Exception as e:
-        logger.error(f"❌ Error registering user: {e}")
-        logger.error(f"📊 Traceback: {traceback.format_exc()}")
+        # Always re-enable streams on error
+        set_registration_state(False)
+        logger.error(f"❌ Registration error: {e}")
+        await manager.broadcast(json.dumps({
+            "type": "registration_error",
+            "data": {"message": "Registration failed - camera restarted"}
+        }))
         raise HTTPException(status_code=500, detail=f"Registration error: {str(e)}")
 
 @app.post("/api/reset-face-recognition")
@@ -920,19 +963,37 @@ async def handle_websocket_message(websocket: WebSocket, message):
             elif message_type == "register_user":
                 name = payload.get("name", "")
                 if name:
-                    logger.info(f"WebSocket: Registering user {name}")
-                    success = robot_movement.register_new_user(name)
-                    manager.mark_status_changed()
+                    # STEP 1: Stop all streams immediately
+                    logger.info(f"🛑 WebSocket: Stopping streams for registration: {name}")
+                    set_registration_state(True)
+                    
+                    # STEP 2: Notify all clients
                     await manager.broadcast(json.dumps({
-                        "type": "user_registered",
+                        "type": "registration_started",
+                        "data": {"name": name, "message": "Camera stopped for registration"}
+                    }))
+                    
+                    # STEP 3: Wait for streams to stop
+                    await asyncio.sleep(0.5)
+                    
+                    # STEP 4: Perform registration
+                    success = robot_movement.register_new_user(name)
+                    
+                    # STEP 5: Re-enable streams
+                    set_registration_state(False)
+                    
+                    # STEP 6: Notify completion
+                    await manager.broadcast(json.dumps({
+                        "type": "registration_completed",
                         "data": {"name": name, "success": success}
                     }))
-                else:
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "data": {"message": "No name specified"}
-                    }))
-            
+                    
+                    if success:
+                        # Tell clients to restart camera
+                        await manager.broadcast(json.dumps({
+                            "type": "restart_camera_stream", 
+                            "data": {"message": "Registration successful"}
+                        }))
             elif message_type == "reset_face_recognition":
                 logger.info("WebSocket: Face recognition reset requested")
                 success = robot_movement.reset_face_recognition_state()

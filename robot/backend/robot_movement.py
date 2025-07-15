@@ -2573,46 +2573,49 @@ class EnhancedRobotController:
             return "Unknown"
     
     def register_new_user(self, name: str) -> bool:
-        """COMPLETELY FIXED: Register a new user"""
-        if not FACE_HELPER_AVAILABLE:
-            logger.error("❌ Face helper not available for registration")
-            return False
-
+        """Registration that works with stream stopping"""
         try:
-            logger.info(f"🆔 Starting registration process for user: {name}")
+            logger.info(f"🆔 REGISTRATION: Starting for {name} (streams should be stopped)")
             
-            # Check if camera is available
+            # Set robot state
+            with self.state_lock:
+                self.state.awaiting_registration = True
+            
+            # Camera should now be free - verify it
             if not self.camera or not self.camera.isOpened():
                 logger.error("❌ Camera not available for registration")
+                with self.state_lock:
+                    self.state.awaiting_registration = False
                 return False
             
-            logger.info("📷 Camera is available and opened")
+            # Clear buffer thoroughly since camera was just freed
+            logger.info("📷 Camera is free, clearing buffer...")
+            for i in range(10):
+                ret, frame = self.camera.read()
+                if ret and frame is not None:
+                    logger.info(f"✅ Buffer clear {i+1}: Got frame {frame.shape}")
+                time.sleep(0.1)
             
-            # FIXED: Use the correct face_helper method
-            picture_success = FR.take_picture(name, self.camera)
+            # Take the picture
+            logger.info("📸 Taking registration photo...")
+            success = FR.take_picture(name, self.camera)
             
-            if not picture_success:
-                logger.error(f"❌ Failed to take picture for {name}")
-                return False
-            
-            logger.info(f"✅ Picture taken and face data reloaded for {name}")
-            
-            # Update robot state
+            # Update state
             with self.state_lock:
-                self.state.current_user = name
-                self.state.face_recognition_attempts = 0
                 self.state.awaiting_registration = False
-                self.state.recognition_complete = True
+                if success:
+                    self.state.current_user = name
+                    self.state.recognition_complete = True
+                    self.state.face_recognition_attempts = 0
             
-            logger.info(f"🎉 Registration completed successfully for user: {name}")
-            return True
+            logger.info(f"🎉 Registration result for {name}: {success}")
+            return success
             
         except Exception as e:
-            logger.error(f"❌ Registration error for {name}: {e}")
-            import traceback
-            logger.error(f"   Full traceback: {traceback.format_exc()}")
-            return False
-    
+            logger.error(f"❌ Registration error: {e}")
+            with self.state_lock:
+                self.state.awaiting_registration = False
+            return False   
     def reset_face_recognition_state(self):
         """Reset face recognition state to properly restart 3-attempt cycle"""
         with self.state_lock:
