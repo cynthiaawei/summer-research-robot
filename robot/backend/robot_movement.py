@@ -1823,6 +1823,7 @@
 #     print("🔧 Key Fix: No automatic navigation to registration page")
 #     print("🔧 Key Fix: Stable WebSocket connections with proper cleanup")
 # robot_movement.py - Complete fixed version with face_helper integration
+# robot_movement.py - COMPLETELY FIXED version that should work with registration
 import asyncio
 import re
 import threading
@@ -1839,7 +1840,7 @@ from enum import Enum
 import json
 from collections import deque
 
-# Import your existing face_helper module or create fallback
+# Import your existing face_helper module or create FIXED fallback
 try:
     import face_helper as FR
     FACE_HELPER_AVAILABLE = True
@@ -1851,17 +1852,18 @@ except ImportError:
         FACE_HELPER_AVAILABLE = True
         logging.info("Successfully imported face_helper module from parent directory")
     except ImportError:
-        logging.warning("face_helper not found, creating simple fallback")
+        logging.warning("face_helper not found, creating FIXED fallback")
         FACE_HELPER_AVAILABLE = True
         
         class SimpleFaceHelper:
             def __init__(self):
-                self.images_path = os.path.join(os.path.dirname(__file__), 'facepics')
+                # FIXED: Use backend/images directory (not facepics!)
+                self.images_path = os.path.join(os.path.dirname(__file__), 'images')
                 self.cap = None
                 self.classNames = []
                 self.encodeListKnown = []
                 os.makedirs(self.images_path, exist_ok=True)
-                logging.info(f"Created/verified facepics directory at {self.images_path}")
+                logging.info(f"Created/verified images directory at {self.images_path}")
             
             def speak(self, text):
                 try:
@@ -1897,6 +1899,7 @@ except ImportError:
                     return None
             
             def take_picture(self, name, camera):
+                """FIXED: Take picture and save to backend/images"""
                 try:
                     logging.info(f"📷 Starting picture capture for user: {name}")
                     if not camera:
@@ -1905,24 +1908,38 @@ except ImportError:
                     if not camera.isOpened():
                         logging.error("❌ Camera is not opened")
                         return False
-                    success, image = camera.read()
-                    if not success:
+                    
+                    # Take the best frame
+                    best_frame = None
+                    for attempt in range(3):
+                        success, image = camera.read()
+                        if success and image is not None:
+                            best_frame = image.copy()
+                            break
+                    
+                    if best_frame is None:
                         logging.error("❌ Failed to capture image from camera")
                         return False
-                    if image is None:
-                        logging.error("❌ Captured image is None")
-                        return False
-                    filename = f'{name}.jpg'
+                    
+                    # Clean filename
+                    clean_name = name.strip().replace(' ', '_').lower()
+                    filename = f'{clean_name}.jpg'
                     filepath = os.path.join(self.images_path, filename)
+                    
                     logging.info(f"💾 Attempting to save image to: {filepath}")
                     os.makedirs(os.path.dirname(filepath), exist_ok=True)
-                    result = cv2.imwrite(filepath, image)
+                    
+                    result = cv2.imwrite(filepath, best_frame)
                     if result:
                         if os.path.exists(filepath):
                             file_size = os.path.getsize(filepath)
                             logging.info(f"✅ Picture saved successfully for {name}")
                             logging.info(f"   📁 Path: {filepath}")
                             logging.info(f"   📏 Size: {file_size} bytes")
+                            
+                            # IMPORTANT: Reload face data immediately
+                            self.reload_face_data()
+                            
                             return True
                         else:
                             logging.error(f"❌ File was not saved to {filepath}")
@@ -1936,6 +1953,38 @@ except ImportError:
                     import traceback
                     logging.error(f"   Traceback: {traceback.format_exc()}")
                     return False
+            
+            def reload_face_data(self):
+                """Reload all face images and regenerate encodings"""
+                try:
+                    self.images = []
+                    self.classNames = []
+                    
+                    if not os.path.exists(self.images_path):
+                        logging.warning(f"Images path does not exist: {self.images_path}")
+                        os.makedirs(self.images_path, exist_ok=True)
+                        return
+                    
+                    # Load all images
+                    myList = os.listdir(self.images_path)
+                    for cl in myList:
+                        if cl.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            try:
+                                full_path = os.path.join(self.images_path, cl)
+                                cur_img = cv2.imread(full_path)
+                                if cur_img is not None:
+                                    self.images.append(cur_img)
+                                    self.classNames.append(os.path.splitext(cl)[0])
+                                    logging.info(f"✅ Loaded image for user: {os.path.splitext(cl)[0]}")
+                            except Exception as e:
+                                logging.error(f"Error loading image {cl}: {e}")
+                    
+                    # Generate encodings
+                    self.encodeListKnown = self.findEncodings(self.images)
+                    logging.info(f"📊 Generated {len(self.encodeListKnown)} face encodings total")
+                    
+                except Exception as e:
+                    logging.error(f"Error reloading face data: {e}")
             
             def findEncodings(self, images):
                 if not FACE_RECOGNITION_AVAILABLE:
@@ -1956,25 +2005,16 @@ except ImportError:
                             logging.error(f"❌ Error encoding image {i+1}: {e}")
                 except Exception as e:
                     logging.error(f"❌ Error in findEncodings: {e}")
-                logging.info(f"📊 Generated {len(encodeList)} face encodings total")
                 return encodeList
         
         FR = SimpleFaceHelper()
         FR.path = FR.images_path
         FR.images = []
         FR.classNames = []
+        
+        # Initial load of existing images
         try:
-            myList = os.listdir(FR.images_path)
-            for cl in myList:
-                if cl.lower().endswith(('.png', '.jpg', '.jpeg')):
-                    try:
-                        cur_img = cv2.imread(f'{FR.images_path}/{cl}')
-                        if cur_img is not None:
-                            FR.images.append(cur_img)
-                            FR.classNames.append(os.path.splitext(cl)[0])
-                    except Exception as e:
-                        logging.error(f"Error loading image {cl}: {e}")
-            FR.encodeListKnown = FR.findEncodings(FR.images)
+            FR.reload_face_data()
             logging.info(f"Loaded {len(FR.classNames)} known faces: {FR.classNames}")
         except Exception as e:
             logging.error(f"Error initializing face recognition: {e}")
@@ -2021,7 +2061,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Hand Detection Helper Class
+# Hand Detection Helper Class (keep as is)
 class HandDetector:
     """Hand gesture detection using MediaPipe"""
     
@@ -2125,7 +2165,7 @@ class HandDetector:
 # Enhanced Robot Configuration
 @dataclass
 class EnhancedRobotConfig:
-    """Enhanced robot configuration with vision and speech settings"""
+    """Enhanced robot configuration with FIXED paths"""
     motor1_speed: int = 38
     motor1_dir: int = 40
     motor2_speed: int = 32
@@ -2145,14 +2185,15 @@ class EnhancedRobotConfig:
     sensor_timeout: float = 0.5
     obstacle_clear_threshold: float = 50.0
     camera_index: int = 0
-    face_images_path: str = '/home/robot/summer-research-robot/RGB-cam/images'
+    # FIXED: Use correct backend images path
+    face_images_path: str = 'images'  # Relative to backend directory
     enable_face_recognition: bool = True
     enable_hand_detection: bool = True
     enable_speech_synthesis: bool = True
     enable_speech_recognition: bool = True
     ai_model: str = "llama3"
 
-# Enhanced Robot State
+# Enhanced Robot State (keep as is)
 @dataclass
 class EnhancedRobotState:
     """Enhanced robot state with vision and speech data"""
@@ -2180,7 +2221,7 @@ class EnhancedRobotState:
     recognition_complete: bool = False
 
 class EnhancedRobotController:
-    """Enhanced robot controller with face recognition and speech capabilities"""
+    """Enhanced robot controller with FIXED face recognition"""
     
     def __init__(self, config: Optional[EnhancedRobotConfig] = None):
         self.config = config or EnhancedRobotConfig()
@@ -2211,6 +2252,7 @@ class EnhancedRobotController:
         self._start_background_tasks()
         logger.info("Enhanced robot controller initialized successfully")
     
+    # Keep all your existing setup methods as they are...
     def _setup_vision(self):
         """Setup camera and vision components with better error handling"""
         if not self.config.enable_face_recognition and not self.config.enable_hand_detection:
@@ -2235,6 +2277,7 @@ class EnhancedRobotController:
                     with self.state_lock:
                         self.state.camera_active = False
             else:
+                # Fallback camera setup
                 camera_indices = [0, 1, 2, -1]
                 camera_initialized = False
                 
@@ -2279,6 +2322,7 @@ class EnhancedRobotController:
             with self.state_lock:
                 self.state.camera_active = False
     
+    # Keep all your other setup methods unchanged...
     def _setup_gpio(self):
         """Setup GPIO pins and PWM"""
         if not GPIO_AVAILABLE:
@@ -2355,11 +2399,11 @@ class EnhancedRobotController:
             logger.error(f"Failed to start background tasks: {e}")
     
     def _unified_vision_loop(self):
-        """FIXED: Unified vision processing loop with proper face recognition"""
+        """COMPLETELY FIXED: Unified vision processing loop"""
         last_user_check = time.time()
         last_gesture = "none"
         gesture_cooldown = time.time()
-        logger.info("🔍 Starting unified vision loop with FIXED face recognition")
+        logger.info("🔍 Starting unified vision loop with COMPLETELY FIXED face recognition")
         
         while not self.shutdown_event.is_set():
             try:
@@ -2373,7 +2417,7 @@ class EnhancedRobotController:
                     frame = cv2.flip(frame, 1)
                     current_time = time.time()
                     
-                    # Hand detection with cooldown to prevent spam
+                    # Hand detection (keep as is)
                     if self.hand_detector:
                         frame_copy = frame.copy()
                         self.hand_detector.find_hands(frame_copy, draw=False)
@@ -2411,13 +2455,12 @@ class EnhancedRobotController:
                                         self.state.hand_gesture = "none"
                                 last_gesture = "none"
                     
-                    # FIXED: Face recognition using the correct method
+                    # COMPLETELY FIXED: Face recognition 
                     with self.state_lock:
                         recognition_complete = self.state.recognition_complete
                         current_attempts = self.state.face_recognition_attempts
                         awaiting_registration = self.state.awaiting_registration
                     
-                    # Only try face recognition if conditions are met
                     if (current_time - last_user_check > 2.0 and 
                         FACE_HELPER_AVAILABLE and 
                         self.state.hand_gesture == "none" and 
@@ -2427,7 +2470,7 @@ class EnhancedRobotController:
                         
                         last_user_check = current_time
                         try:
-                            # CORRECTED: Use the proper method with the current frame
+                            # FIXED: Use the correct method
                             current_user = self._recognize_user_in_frame(frame)
                             
                             if current_user and current_user != "Unknown":
@@ -2455,7 +2498,6 @@ class EnhancedRobotController:
                                 
                                 logger.info(f"🔍 Face recognition attempt {new_attempts}/3 - No user found")
                                 
-                                # Check if we've reached max attempts
                                 if new_attempts >= 3:
                                     with self.state_lock:
                                         self.state.recognition_complete = True
@@ -2465,7 +2507,6 @@ class EnhancedRobotController:
                                     
                         except Exception as e:
                             logger.error(f"Face recognition error: {e}")
-                            # On error, still count as an attempt
                             new_attempts = current_attempts + 1
                             with self.state_lock:
                                 self.state.face_recognition_attempts = new_attempts
@@ -2487,38 +2528,90 @@ class EnhancedRobotController:
                 logger.error(f"Unified vision processing error: {e}")
                 time.sleep(0.1)
     
-    def _recognize_user_with_face_helper(self):
-        """Use face_helper to recognize user from current frame"""
-        if not FACE_HELPER_AVAILABLE or not self.current_frame:
+    def _recognize_user_in_frame(self, frame):
+        """COMPLETELY FIXED: Use face_helper to recognize user from current frame"""
+        if not FACE_HELPER_AVAILABLE or not FACE_RECOGNITION_AVAILABLE:
             return "Unknown"
         
         try:
-            img = self.current_frame
-            imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
-            imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
-            
-            if FACE_RECOGNITION_AVAILABLE:
-                faces_cur_frame = face_recognition.face_locations(imgS)
-                encodes_cur_frame = face_recognition.face_encodings(imgS, faces_cur_frame)
+            # Check if we have the advanced face_recognition_system
+            if hasattr(FR, 'face_recognition_system'):
+                name, confidence = FR.face_recognition_system.recognize_face_in_frame(frame)
+                if name and name != "Unknown" and confidence > 0.4:
+                    logger.debug(f"Face recognized: {name} (confidence: {confidence:.3f})")
+                    return name
+                else:
+                    logger.debug(f"No face recognized (confidence: {confidence:.3f})")
+                    return "Unknown"
+            else:
+                # Use simple fallback recognition
+                img = frame
+                imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+                imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
                 
-                for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
-                    if not FR.encodeListKnown:
-                        return "Unknown"
+                if FACE_RECOGNITION_AVAILABLE and FR.encodeListKnown:
+                    faces_cur_frame = face_recognition.face_locations(imgS)
+                    encodes_cur_frame = face_recognition.face_encodings(imgS, faces_cur_frame)
                     
-                    matches = face_recognition.compare_faces(FR.encodeListKnown, encode_face)
-                    face_distances = face_recognition.face_distance(FR.encodeListKnown, encode_face)
-                    
-                    if len(face_distances) > 0:
-                        match_index = np.argmin(face_distances)
-                        best_match_distance = face_distances[match_index]
+                    for encode_face in encodes_cur_frame:
+                        matches = face_recognition.compare_faces(FR.encodeListKnown, encode_face, tolerance=0.6)
+                        face_distances = face_recognition.face_distance(FR.encodeListKnown, encode_face)
                         
-                        if best_match_distance <= 0.42 and matches[match_index]:
-                            name = FR.classNames[match_index].upper()
-                            return name
-            return "Unknown"
+                        if len(face_distances) > 0:
+                            match_index = np.argmin(face_distances)
+                            best_match_distance = face_distances[match_index]
+                            
+                            if best_match_distance <= 0.6 and matches[match_index]:
+                                name = FR.classNames[match_index].replace('_', ' ').title()
+                                logger.debug(f"Face recognized: {name} (distance: {best_match_distance:.3f})")
+                                return name
+                
+                return "Unknown"
+                    
         except Exception as e:
-            logger.error(f"Face recognition with face_helper error: {e}")
+            logger.error(f"Face recognition error: {e}")
             return "Unknown"
+    
+    def register_new_user(self, name: str) -> bool:
+        """COMPLETELY FIXED: Register a new user"""
+        if not FACE_HELPER_AVAILABLE:
+            logger.error("❌ Face helper not available for registration")
+            return False
+
+        try:
+            logger.info(f"🆔 Starting registration process for user: {name}")
+            
+            # Check if camera is available
+            if not self.camera or not self.camera.isOpened():
+                logger.error("❌ Camera not available for registration")
+                return False
+            
+            logger.info("📷 Camera is available and opened")
+            
+            # FIXED: Use the correct face_helper method
+            picture_success = FR.take_picture(name, self.camera)
+            
+            if not picture_success:
+                logger.error(f"❌ Failed to take picture for {name}")
+                return False
+            
+            logger.info(f"✅ Picture taken and face data reloaded for {name}")
+            
+            # Update robot state
+            with self.state_lock:
+                self.state.current_user = name
+                self.state.face_recognition_attempts = 0
+                self.state.awaiting_registration = False
+                self.state.recognition_complete = True
+            
+            logger.info(f"🎉 Registration completed successfully for user: {name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Registration error for {name}: {e}")
+            import traceback
+            logger.error(f"   Full traceback: {traceback.format_exc()}")
+            return False
     
     def reset_face_recognition_state(self):
         """Reset face recognition state to properly restart 3-attempt cycle"""
@@ -2528,11 +2621,9 @@ class EnhancedRobotController:
             self.state.current_user = "Unknown"
             self.state.recognition_complete = False
         logger.info("✅ Face recognition state COMPLETELY reset - starting NEW 3-attempt cycle")
-        logger.info(f"   • Attempts reset to: 0/3")
-        logger.info(f"   • Recognition complete: False (will start scanning)")
-        logger.info(f"   • Current user reset to: Unknown")
         return True
     
+    # Keep all your existing methods (obstacle detection, status update, etc.)
     def _obstacle_detection_loop(self):
         """Background obstacle detection loop"""
         while not self.shutdown_event.is_set():
@@ -2825,92 +2916,7 @@ class EnhancedRobotController:
             logger.error(f"Face recognition error: {e}")
             return None
     
-    def register_new_user(self, name: str) -> bool:
-        if not FACE_HELPER_AVAILABLE:
-            logger.error("❌ Face helper not available for registration")
-            return False
-
-        try:
-            logger.info(f"🆔 Starting registration process for user: {name}")
-            
-            # Check if camera is available
-            if not self.camera or not self.camera.isOpened():
-                logger.error("❌ Camera not available for registration")
-                return False
-            
-            logger.info("📷 Camera is available and opened")
-            
-            # CORRECTED: Use the correct face_helper method
-            # This will save to backend/images directory automatically
-            picture_success = FR.take_picture(name, self.camera)
-            
-            if not picture_success:
-                logger.error(f"❌ Failed to take picture for {name}")
-                return False
-            
-            logger.info(f"✅ Picture taken and face data reloaded for {name}")
-            
-            # Update robot state
-            with self.state_lock:
-                self.state.current_user = name
-                self.state.face_recognition_attempts = 0
-                self.state.awaiting_registration = False
-                self.state.recognition_complete = True  # Registration counts as completion
-            
-            logger.info(f"🎉 Registration completed successfully for user: {name}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Registration error for {name}: {e}")
-            import traceback
-            logger.error(f"   Full traceback: {traceback.format_exc()}")
-            return False
-
-    def _recognize_user_in_frame(self, frame):
-        """CORRECTED: Use face_helper to recognize user from current frame"""
-        if not FACE_HELPER_AVAILABLE:
-            return "Unknown"
-        
-        try:
-            # Use the face_recognition_system if available, otherwise fallback
-            if hasattr(FR, 'face_recognition_system'):
-                name, confidence = FR.face_recognition_system.recognize_face_in_frame(frame)
-                if name and name != "Unknown" and confidence > 0.4:
-                    logger.debug(f"Face recognized: {name} (confidence: {confidence:.3f})")
-                    return name
-                else:
-                    logger.debug(f"No face recognized (confidence: {confidence:.3f})")
-                    return "Unknown"
-            else:
-                # Fallback for simple face_helper
-                img = frame
-                imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
-                imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
-                
-                if FACE_RECOGNITION_AVAILABLE:
-                    faces_cur_frame = face_recognition.face_locations(imgS)
-                    encodes_cur_frame = face_recognition.face_encodings(imgS, faces_cur_frame)
-                    
-                    for encode_face, face_loc in zip(encodes_cur_frame, faces_cur_frame):
-                        if not FR.encodeListKnown:
-                            return "Unknown"
-                        
-                        matches = face_recognition.compare_faces(FR.encodeListKnown, encode_face)
-                        face_distances = face_recognition.face_distance(FR.encodeListKnown, encode_face)
-                        
-                        if len(face_distances) > 0:
-                            match_index = np.argmin(face_distances)
-                            best_match_distance = face_distances[match_index]
-                            
-                            if best_match_distance <= 0.42 and matches[match_index]:
-                                name = FR.classNames[match_index].upper()
-                                return name
-                return "Unknown"
-                    
-        except Exception as e:
-            logger.error(f"Face recognition with face_helper error: {e}")
-            return "Unknown"
-    
+    # Keep all your existing movement and other methods as they are...
     def move(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
         direction_map = {
             "up": "forward",
@@ -3195,35 +3201,7 @@ class EnhancedRobotController:
         for thread, name in threads_to_join:
             if thread and thread.is_alive():
                 logger.info(f"Waiting for {name} thread to finish...")
-                thread.join(timeout=2.0)
-                if thread.is_alive():
-                    logger.warning(f"{name} thread did not finish gracefully")
-        if self.camera and self.camera.isOpened():
-            try:
-                self.camera.release()
-                logger.info("Camera released")
-            except Exception as e:
-                logger.error(f"Camera cleanup error: {e}")
-        if self.gpio_initialized:
-            try:
-                pwm_objects = [
-                    (self.motor1_pwm, "motor1"),
-                    (self.motor2_pwm, "motor2"), 
-                    (self.motor3_pwm, "motor3")
-                ]
-                for pwm, name in pwm_objects:
-                    if pwm:
-                        try:
-                            pwm.stop()
-                            logger.debug(f"{name} PWM stopped")
-                        except Exception as e:
-                            logger.error(f"Error stopping {name} PWM: {e}")
-                GPIO.cleanup()
-                logger.info("GPIO cleanup completed")
-            except Exception as e:
-                logger.error(f"GPIO cleanup error: {e}")
-        logger.info("Enhanced robot controller shutdown complete")
-    
+                thread.join(timeout=2.0)    
     def _recognize_user_in_frame(self, frame):
         """Use face_helper to recognize user from current frame"""
         if not FACE_HELPER_AVAILABLE or not FACE_RECOGNITION_AVAILABLE:
