@@ -1858,7 +1858,7 @@ except ImportError:
         class SimpleFaceHelper:
             def __init__(self):
                 # FIXED: Use backend/images directory (not facepics!)
-                self.images_path = 'robot\backend\images'
+                self.images_path = "images"
                 self.cap = None
                 self.classNames = []
                 self.encodeListKnown = []

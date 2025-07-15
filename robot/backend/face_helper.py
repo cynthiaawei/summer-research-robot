@@ -24,10 +24,10 @@ class FaceRecognitionSystem:
             # DIRECT PATH - change this to match your exact system
             if platform.system().lower() == "windows":
                 # For Windows (your development machine)
-                self.images_path = r"C:\Users\sharm\OneDrive\Desktop\summer-research-robot\robot\backend\images"
+                self.images_path = "images"
             else:
                 # For Linux/Raspberry Pi
-                self.images_path = "/home/robot/summer-research-robot/robot/backend/images"
+                self.images_path = "images"
         else:
             self.images_path = images_path
         
