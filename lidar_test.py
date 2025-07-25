@@ -7,7 +7,7 @@ import sys
 def find_serial_port():
     """Try the serial ports that actually exist on your system"""
     ports = [
-        '/dev/serial0',    # This links to ttyAMA10
+        # This links to ttyAMA10 
         '/dev/ttyAMA10',   # Direct access  
         '/dev/ttyAMA1',    # Alternative UART
     ]
