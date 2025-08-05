@@ -684,4 +684,4 @@ class HybridNavigator:
         self.stuck_count = 0
         self.ai_attempt_count = 0
 
-        print("Navigation cleanup complete")s
+        print("Navigation cleanup complete")
