@@ -1,1 +1,0 @@
-/home/jenny/2025sRobot/build/my_package/ament_cmake_environment_hooks/local_setup.zsh

@@ -1,1 +1,0 @@
-/home/jenny/2025sRobot/src/rplidar_ros/launch/rplidar_c1_launch.py
