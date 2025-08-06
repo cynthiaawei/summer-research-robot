@@ -15,11 +15,10 @@
 #define ID_6  (7u)
 
 #include <Wire.h>
-//#define Left_Ada_Addr 5
+#define Left_Ada_Addr 5
 
-#define D0 3
-#define D1 5
-#define D2 7
+#define D10 10    // WAVE, D10 connects to GPIO3, BCM 5
+#define D11 11    // HAND, D11 connects to GPIO2, BCM 3
 
 // set up servo
 Servo leftServo;
@@ -262,9 +261,9 @@ void setup()
   setVoltageLimits();
   setComplianceMargins();
 
-  pinMode(D0, INPUT);
-  pinMode(D1, INPUT);
-  pinMode(D2, INPUT);
+  // pinMode(D0, INPUT);
+  // pinMode(D1, INPUT);
+  // pinMode(D2, INPUT);
 
   leftServo.attach(9); // pin 9 is for the left servo
   //changeSpeedSmooth(leftServo, 0);
@@ -289,6 +288,20 @@ void receiveEvent(int byteCount) {
 
 void loop()
 {
+  delay(500);
+  if(D10){
+    Serial.println("hand");
+    reachHand();
+    delay(1000);
+  } else if(D11){
+    Serial.println("wave");
+    wave();
+    delay(1000);
+  }else{
+    Serial.println("nothing");
+    delay(1000); // do nothing
+  }
+
   // changeSpeedSmooth(leftServo, 120);
   // ax12a.moveSpeed(ID_1, 1023-520, servoSpeed);
   // ax12a.moveSpeed(ID_2, 520, servoSpeed);
@@ -307,18 +320,19 @@ void loop()
   // ax12a.moveSpeed(ID_4, 450, servoSpeed);
   // ax12a.moveSpeed(ID_5, 450, servoSpeed);
   // ax12a.moveSpeed(ID_6, 450, servoSpeed);
+  
 
-  if(!D2 && !D1 && D0){ // waving hand 001
-    wave();
-    delay(1000);
+  // if(!D2 && !D1 && D0){ // waving hand 001
+  //   wave();
+  //   delay(1000);
 
-  } else if(!D2 && D1 && !D0){ //shake hand 010
-    reachHand();
-  } else if(D2 && D1 && D0){
+  // } else if(!D2 && D1 && !D0){ //shake hand 010
+  //   reachHand();
+  // } else if(D2 && D1 && D0){
     
-  } else {
-    // Do nothing
-  }
+  // } else {
+  //   // Do nothing
+  // }
 
   // normalPos();
   // delay(5000);

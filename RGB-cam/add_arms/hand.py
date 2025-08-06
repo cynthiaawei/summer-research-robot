@@ -5,7 +5,8 @@ from collections import deque
 import RPi.GPIO as GPIO
 
 # THESE NUMBERS ARE TO BE MODIFIED
-wave = 4
+# Need to disable I2C communication on RPI5
+wave = 3
 hand = 5
 
 # === GPIO Setup ===
@@ -127,7 +128,7 @@ def is_waving(lmList, detector, index_x_history):
 
     if(index_motion <= 40): return False
     current_time = time.time()
-    GPIO.output(wave, HIGH)
+    GPIO.output(wave, GPIO.HIGH)
     return True
 
 def fingers_close_together(lmList):
@@ -146,7 +147,7 @@ def is_shaking_hands(lmList):
     if abs(lmList[5][2]-lmList[0][2]) > 50:
         return False
     current_time = time.time()
-    GPIO.output(hand, HIGH)
+    GPIO.output(hand, GPIO.HIGH)
     return True
 
 def main():
@@ -167,8 +168,8 @@ def main():
             elif is_shaking_hands(lmList):
                 print("shaking hands")
             else:
-                GPIO.output(hand, FALSE)
-                GPIO.output(wave, HIGH)
+                GPIO.output(hand, GPIO.LOW) # prev was "False" instad of GPIO.LOW?
+                GPIO.output(wave, GPIO.HIGH)
                 
 def process_hand_frame(frame, history, detector): #  only the while loop inside of main
     """
