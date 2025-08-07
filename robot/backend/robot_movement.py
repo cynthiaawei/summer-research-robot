@@ -2243,8 +2243,8 @@ class EnhancedRobotController:
         self.motor1_pwm = None
         self.motor2_pwm = None
         self.motor3_pwm = None
-        # self.HIGH = GPIO.HIGH if GPIO_AVAILABLE else 1
-        # self.LOW = GPIO.LOW if GPIO_AVAILABLE else 0
+        self.HIGH = GPIO.HIGH #if GPIO_AVAILABLE else 1
+        self.LOW = GPIO.LOW #if GPIO_AVAILABLE else 0
         self.gpio_initialized = False
         self._setup_gpio()
         self._setup_ai()
