@@ -907,7 +907,7 @@ GPIO.setup(Motor1_Dir, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor2_Speed, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor2_Dir, GPIO.OUT, initial=GPIO.LOW)
 GPIO.setup(Motor3_Speed, GPIO.OUT, initial=GPIO.LOW)
-GPIO.setup(Motor3_Dir, GPIO.OUT, initial=GPIO.LOW)
+# GPIO.setup(Motor3_Dir, GPIO.OUT, initial=GPIO.LOW)
 
 # Set PWM frequencies
 freq = 1000
@@ -1176,7 +1176,7 @@ def move_robot(direction, speed=None, duration_ms=None):
     # Set motor directions
     GPIO.output(Motor1_Dir, config["dirs"][0])
     GPIO.output(Motor2_Dir, config["dirs"][1])
-    GPIO.output(Motor3_Dir, config["dirs"][2])
+    # GPIO.output(Motor3_Dir, config["dirs"][2])
     
     # Apply speeds
     changeSpeedSmooth(gCurSpeed1, config["speeds"][0], 
