@@ -1116,7 +1116,7 @@ def get_robot_controller():
 def get_status() -> Dict:
     """Get current robot status - called by FastAPI"""
     try:
-        return get_robot_controller().get_status()
+        return   get_status()
     except Exception as e:
         logger.error(f"Error getting status: {e}")
         return {
@@ -1129,7 +1129,7 @@ def get_status() -> Dict:
 def move(direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
     """Move robot in specified direction - called by FastAPI"""
     try:
-        return get_robot_controller().move(direction, speed, duration_ms)
+        return   move(direction, speed, duration_ms)
     except Exception as e:
         logger.error(f"Error moving robot: {e}")
         return False
@@ -1137,7 +1137,7 @@ def move(direction: str, speed: Optional[int] = None, duration_ms: Optional[int]
 def stop() -> bool:
     """Stop the robot - called by FastAPI"""
     try:
-        return get_robot_controller().stop()
+        return   stop()
     except Exception as e:
         logger.error(f"Error stopping robot: {e}")
         return False
@@ -1145,7 +1145,7 @@ def stop() -> bool:
 def parse_command(command: str) -> Optional[Tuple[str, Optional[int]]]:
     """Parse natural language command - called by FastAPI"""
     try:
-        return get_robot_controller().parse_command(command)
+        return   parse_command(command)
     except Exception as e:
         logger.error(f"Error parsing command: {e}")
         return None
@@ -1153,7 +1153,7 @@ def parse_command(command: str) -> Optional[Tuple[str, Optional[int]]]:
 async def chat(message: str, context: str = "") -> str:
     """Chat with AI model - called by FastAPI"""
     try:
-        return await get_robot_controller().chat(message, context)
+        return await   chat(message, context)
     except Exception as e:
         logger.error(f"Error in chat: {e}")
         return "Error processing chat message."
@@ -1161,7 +1161,7 @@ async def chat(message: str, context: str = "") -> str:
 def emergency_stop() -> bool:
     """Emergency stop - called by FastAPI"""
     try:
-        return get_robot_controller().emergency_stop()
+        return   emergency_stop()
     except Exception as e:
         logger.error(f"Error in emergency stop: {e}")
         return False
@@ -1169,7 +1169,7 @@ def emergency_stop() -> bool:
 def reset_obstacle_detection() -> bool:
     """Reset obstacle detection - called by FastAPI"""
     try:
-        return get_robot_controller().reset_obstacle_detection()
+        return   reset_obstacle_detection()
     except Exception as e:
         logger.error(f"Error resetting obstacle detection: {e}")
         return False
@@ -1177,7 +1177,7 @@ def reset_obstacle_detection() -> bool:
 def get_sensor_data() -> Dict:
     """Get sensor data - called by FastAPI"""
     try:
-        return get_robot_controller().get_sensor_data()
+        return   get_sensor_data()
     except Exception as e:
         logger.error(f"Error getting sensor data: {e}")
         return {
@@ -1192,7 +1192,7 @@ def get_sensor_data() -> Dict:
 def set_speed(speed: int) -> bool:
     """Set default speed - called by FastAPI"""
     try:
-        return get_robot_controller().set_speed(speed)
+        return   set_speed(speed)
     except Exception as e:
         logger.error(f"Error setting speed: {e}")
         return False
@@ -1200,7 +1200,7 @@ def set_speed(speed: int) -> bool:
 def set_motor_compensation(compensation: int) -> bool:
     """Set motor compensation - called by FastAPI"""
     try:
-        return get_robot_controller().set_motor_compensation(compensation)
+        return   set_motor_compensation(compensation)
     except Exception as e:
         logger.error(f"Error setting motor compensation: {e}")
         return False
@@ -1208,87 +1208,87 @@ def set_motor_compensation(compensation: int) -> bool:
 def get_config() -> Dict:
     """Get configuration - called by FastAPI"""
     try:
-        return get_robot_controller().get_config()
+        return   get_config()
     except Exception as e:
         logger.error(f"Error getting config: {e}")
         return {}
 
 def shutdown_robot():
     """Shutdown robot controller - called by FastAPI on app shutdown"""
-    global _robot_controller
-    with _controller_lock:
-        if _robot_controller is not None:
-            _robot_controller.shutdown()
-            _robot_controller = None
+    # global _robot_controller
+    # with _controller_lock:
+    #     if _robot_controller is not None:
+    #         _robot_controller.shutdown()
+    #         _robot_controller = None
 
 # Legacy function aliases for backward compatibility with old code
 def goForwards(speed: int, time_ms: int) -> bool:
     """Legacy function - use go_forwards instead"""
-    return get_robot_controller().go_forwards(speed, time_ms)
+    return   go_forwards(speed, time_ms)
 
 def goBackwards(speed: int, time_ms: int) -> bool:
     """Legacy function - use go_backwards instead"""
-    return get_robot_controller().go_backwards(speed, time_ms)
+    return   go_backwards(speed, time_ms)
 
 def turnLeft(speed: int, time_ms: int) -> bool:
     """Legacy function - use turn_left instead"""
-    return get_robot_controller().turn_left(speed, time_ms)
+    return   turn_left(speed, time_ms)
 
 def turnRight(speed: int, time_ms: int) -> bool:
     """Legacy function - use turn_right instead"""
-    return get_robot_controller().turn_right(speed, time_ms)
+    return   turn_right(speed, time_ms)
 
 def moveLeft(speed: int, time_ms: int) -> bool:
     """Legacy function - use move_left instead"""
-    return get_robot_controller().move_left(speed, time_ms)
+    return   move_left(speed, time_ms)
 
 def moveRight(speed: int, time_ms: int) -> bool:
     """Legacy function - use move_right instead"""
-    return get_robot_controller().move_right(speed, time_ms)
+    return   move_right(speed, time_ms)
 
 def startForward() -> bool:
     """Legacy function - use start_forward instead"""
-    return get_robot_controller().start_forward()
+    return   start_forward()
 
 def startBackward() -> bool:
     """Legacy function - use start_backward instead"""
-    return get_robot_controller().start_backward()
+    return   start_backward()
 
 def startTurnLeft() -> bool:
     """Legacy function - use start_turn_left instead"""
-    return get_robot_controller().start_turn_left()
+    return   start_turn_left()
 
 def startTurnRight() -> bool:
     """Legacy function - use start_turn_right instead"""
-    return get_robot_controller().start_turn_right()
+    return   start_turn_right()
 
 def startMoveLeft() -> bool:
     """Legacy function - use start_move_left instead"""
-    return get_robot_controller().start_move_left()
+    return   start_move_left()
 
 def startMoveRight() -> bool:
     """Legacy function - use start_move_right instead"""
-    return get_robot_controller().start_move_right()
+    return   start_move_right()
 
 def immediateStop() -> bool:
     """Legacy function - use immediate_stop instead"""
-    return get_robot_controller().immediate_stop()
+    return   immediate_stop()
 
 def stopMotors(time_ms: int) -> bool:
     """Legacy function - use stop_motors instead"""
-    return get_robot_controller().stop_motors(time_ms)
+    return   stop_motors(time_ms)
 
 def processImmediateCommand(command: str) -> bool:
     """Legacy function - use process_immediate_command instead"""
-    return get_robot_controller().process_immediate_command(command)
+    return   process_immediate_command(command)
 
 def processCommand(command: str, time_ms: int) -> bool:
     """Legacy function - use process_command instead"""
-    return get_robot_controller().process_command(command, time_ms)
+    return   process_command(command, time_ms)
 
 def get_distance(trig_pin: int, echo_pin: int) -> float:
     """Legacy function - get distance from ultrasonic sensor"""
-    return get_robot_controller()._get_distance(trig_pin, echo_pin)
+    return   _get_distance(trig_pin, echo_pin)
 
 # Factory function for easy initialization
 def create_robot(config: Optional[RobotConfig] = None) -> RobotController:
