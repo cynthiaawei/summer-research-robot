@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 import uvicorn
 
 # Import robot_movement
-#import robot_movement
+import robot_movement
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
