@@ -2045,7 +2045,7 @@ except ImportError:
     logging.warning("MediaPipe not available - hand detection disabled")
 
 # try:
-    import RPi.GPIO as GPIO
+import RPi.GPIO as GPIO
 #     GPIO_AVAILABLE = True
 # except ImportError:
 #     GPIO_AVAILABLE = False
