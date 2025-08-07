@@ -10,11 +10,11 @@ from enum import Enum
 import json
 
 # Optional imports with graceful fallbacks
-try:
-    import RPi.GPIO as GPIO
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
+#try:
+import RPi.GPIO as GPIO
+    #GPIO_AVAILABLE = True
+#except ImportError:
+    #GPIO_AVAILABLE = False
 
 try:
     from langchain_ollama import OllamaLLM
@@ -128,8 +128,8 @@ class RobotController:
         self.motor3_pwm = None
         
         # Define direction constants that work in both modes
-        self.HIGH = GPIO.HIGH if GPIO_AVAILABLE else 1
-        self.LOW = GPIO.LOW if GPIO_AVAILABLE else 0
+        self.HIGH = GPIO.HIGH #if GPIO_AVAILABLE else 1
+        self.LOW = GPIO.LOW #if GPIO_AVAILABLE else 0
         
         # Initialize components
         self.gpio_initialized = False
@@ -141,10 +141,10 @@ class RobotController:
     
     def _setup_gpio(self):
         """Setup GPIO pins and PWM with proper error handling - matching old code structure"""
-        if not GPIO_AVAILABLE:
-            logger.warning("GPIO not available - running in simulation mode")
-            self.gpio_initialized = False
-            return
+        # if not GPIO_AVAILABLE:
+        #     logger.warning("GPIO not available - running in simulation mode")
+        #     self.gpio_initialized = False
+        #     return
         
         pwm_objects = []
         try:

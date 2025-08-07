@@ -956,7 +956,7 @@ def get_distance(trig_pin, echo_pin, timeout=0.5):
         timeout_start = time.time()
         while GPIO.input(echo_pin) == 0:
             if time.time() - timeout_start > timeout:
-                logger.warning(f"Timeout waiting for echo start on pin {echo_pin}")
+                #logger.warning(f"Timeout waiting for echo start on pin {echo_pin}")
                 return -1
         pulse_start = time.time()
         
@@ -964,7 +964,7 @@ def get_distance(trig_pin, echo_pin, timeout=0.5):
         timeout_start = time.time()
         while GPIO.input(echo_pin) == 1:
             if time.time() - timeout_start > timeout:
-                logger.warning(f"Timeout waiting for echo end on pin {echo_pin}")
+                #logger.warning(f"Timeout waiting for echo end on pin {echo_pin}")
                 return -1
         pulse_end = time.time()
         
