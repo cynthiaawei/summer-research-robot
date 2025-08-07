@@ -2044,11 +2044,11 @@ except ImportError:
     MEDIAPIPE_AVAILABLE = False
     logging.warning("MediaPipe not available - hand detection disabled")
 
-# try:
-import RPi.GPIO as GPIO
-#     GPIO_AVAILABLE = True
-# except ImportError:
-#     GPIO_AVAILABLE = False
+try:
+    import RPi.GPIO as GPIO
+    GPIO_AVAILABLE = True
+except ImportError:
+    GPIO_AVAILABLE = False
 
 try:
     from langchain_ollama import OllamaLLM
@@ -2243,8 +2243,8 @@ class EnhancedRobotController:
         self.motor1_pwm = None
         self.motor2_pwm = None
         self.motor3_pwm = None
-        self.HIGH = GPIO.HIGH #if GPIO_AVAILABLE else 1
-        self.LOW = GPIO.LOW #if GPIO_AVAILABLE else 0
+        self.HIGH = GPIO.HIGH if GPIO_AVAILABLE else 1
+        self.LOW = GPIO.LOW if GPIO_AVAILABLE else 0
         self.gpio_initialized = False
         self._setup_gpio()
         self._setup_ai()
@@ -2325,9 +2325,9 @@ class EnhancedRobotController:
     # Keep all your other setup methods unchanged...
     def _setup_gpio(self):
         """Setup GPIO pins and PWM"""
-        # if not GPIO_AVAILABLE:
-        #     logger.warning("GPIO not available - running in simulation mode")
-        #     return
+        if not GPIO_AVAILABLE:
+            logger.warning("GPIO not available - running in simulation mode")
+            return
         
         try:
             GPIO.setmode(GPIO.BOARD)
