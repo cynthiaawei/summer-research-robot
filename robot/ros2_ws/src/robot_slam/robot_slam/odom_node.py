@@ -40,36 +40,56 @@ class OdometryNode(Node):
         self.arduino_thread = threading.Thread(target=self.connect_arduino, daemon=True)
         self.arduino_thread.start()
         
-        self.get_logger().info("🤖 Arduino Odometry node started")
+        self.get_logger().info("🤖 USB/IP Arduino Odometry node started")
         
     def connect_arduino(self):
-        """Connect to Arduino and start reading data"""
-        ports = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
+        """Connect to Arduino via USB/IP and start reading data"""
+        # USB/IP forwarded devices appear as /dev/ttyACM* in WSL2
+        ports = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyACM2', '/dev/ttyUSB0', '/dev/ttyUSB1']
+        
+        # Give WSL2 some time to detect the forwarded device
+        time.sleep(2)
         
         for port in ports:
             try:
                 self.get_logger().info(f"🔍 Trying to connect to {port}...")
-                self.arduino = serial.Serial(port, 115200, timeout=2.0)
-                time.sleep(2)  # Wait for Arduino reset
                 
-                # Test connection
-                self.arduino.write(b'PING\n')
-                time.sleep(0.5)
-                response = self.arduino.readline().decode().strip()
+                # USB/IP forwarded devices might need longer timeout
+                self.arduino = serial.Serial(port, 115200, timeout=3.0)
+                time.sleep(3)  # Longer wait for USB/IP device reset
                 
-                if 'PONG' in response:
-                    self.arduino_connected = True
-                    self.get_logger().info(f"✅ Arduino found on {port}")
+                # Clear any existing data
+                self.arduino.flushInput()
+                self.arduino.flushOutput()
+                
+                # Test connection with multiple attempts
+                for attempt in range(3):
+                    self.arduino.write(b'PING\n')
+                    time.sleep(1)
+                    
+                    if self.arduino.in_waiting > 0:
+                        response = self.arduino.readline().decode().strip()
+                        if 'PONG' in response:
+                            self.arduino_connected = True
+                            self.get_logger().info(f"✅ Arduino found on {port} (USB/IP)")
+                            break
+                    
+                    self.get_logger().info(f"⏳ Attempt {attempt + 1}/3 on {port}")
+                
+                if self.arduino_connected:
                     break
                 else:
                     self.arduino.close()
-                    self.get_logger().warn(f"⚠️  No response from {port}")
+                    self.get_logger().warn(f"⚠️  No response from {port} after 3 attempts")
                     
             except Exception as e:
                 self.get_logger().warn(f"❌ Failed to connect to {port}: {e}")
                 
         if not self.arduino_connected:
-            self.get_logger().error("❌ Arduino Nano 33 IoT not found!")
+            self.get_logger().error("❌ Arduino not found via USB/IP!")
+            self.get_logger().info("📝 Check if usbipd attach was successful:")
+            self.get_logger().info("   Windows: usbipd list")
+            self.get_logger().info("   WSL2: lsusb | grep Arduino")
             return
             
         # Start reading data
@@ -83,16 +103,23 @@ class OdometryNode(Node):
                     line = self.arduino.readline().decode().strip()
                     
                     if line.startswith('ODOM:'):
-                        # Parse: ODOM:vx,vy,vth,dt
+                        # Parse: ODOM:pos_x,pos_y,heading,vel_x,vel_y,vel_angular
                         parts = line.replace('ODOM:', '').split(',')
-                        if len(parts) >= 4:
-                            vx = float(parts[0])
-                            vy = float(parts[1]) 
-                            vth = float(parts[2])
-                            dt = float(parts[3])
+                        if len(parts) >= 6:
+                            pos_x = float(parts[0])
+                            pos_y = float(parts[1])
+                            heading = float(parts[2])
+                            vel_x = float(parts[3])
+                            vel_y = float(parts[4])
+                            vel_angular = float(parts[5])
                             
-                            # Update robot pose
-                            self.update_pose(vx, vy, vth, dt)
+                            # Update robot state directly from Arduino
+                            self.x = pos_x
+                            self.y = pos_y
+                            self.theta = heading
+                            self.vx = vel_x
+                            self.vy = vel_y
+                            self.vth = vel_angular
                             
             except Exception as e:
                 self.get_logger().error(f"❌ Arduino read error: {e}")
@@ -101,22 +128,6 @@ class OdometryNode(Node):
                 
             time.sleep(0.01)
             
-    def update_pose(self, vx, vy, vth, dt):
-        """Update robot pose from velocity"""
-        # Store velocities
-        self.vx = vx
-        self.vy = vy 
-        self.vth = vth
-        
-        # Update position
-        delta_x = (vx * math.cos(self.theta) - vy * math.sin(self.theta)) * dt
-        delta_y = (vx * math.sin(self.theta) + vy * math.cos(self.theta)) * dt
-        delta_th = vth * dt
-        
-        self.x += delta_x
-        self.y += delta_y
-        self.theta += delta_th
-        
     def euler_to_quaternion(self, yaw):
         """Convert yaw to quaternion"""
         qz = math.sin(yaw / 2.0)
