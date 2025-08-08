@@ -8,6 +8,7 @@ import socket
 import time
 import threading
 import math
+import subprocess
 from rclpy.qos import QoSProfile
 
 class NetworkOdometryNode(Node):
@@ -33,6 +34,7 @@ class NetworkOdometryNode(Node):
         self.socket = None
         self.connected = False
         self.windows_ip = self.get_windows_ip()
+        self.tcp_port = 8888  # Using port 8888
         
         # Timer for publishing
         self.create_timer(0.05, self.publish_odometry)  # 20Hz
@@ -42,28 +44,40 @@ class NetworkOdometryNode(Node):
         self.connect_thread.start()
         
         self.get_logger().info("🤖 Network Arduino Odometry node started")
-        self.get_logger().info(f"🌐 Connecting to Windows bridge at {self.windows_ip}:9999")
+        self.get_logger().info(f"🌐 Connecting to Windows bridge at {self.windows_ip}:{self.tcp_port}")
         
     def get_windows_ip(self):
-        """Get Windows host IP from WSL2"""
+        """Get Windows host IP from WSL2 default gateway"""
         try:
-            with open('/etc/resolv.conf', 'r') as f:
-                for line in f:
-                    if 'nameserver' in line:
-                        return line.split()[1]
-        except:
-            pass
-        return "172.18.144.1"  # Default WSL2 host IP
+            # Get default gateway (Windows IP) instead of nameserver
+            result = subprocess.run(['ip', 'route', 'show', 'default'], 
+                                  capture_output=True, text=True)
+            output = result.stdout.strip()
+            
+            # Parse: "default via 172.27.144.1 dev eth0"
+            for line in output.split('\n'):
+                if 'default via' in line:
+                    parts = line.split()
+                    for i, part in enumerate(parts):
+                        if part == 'via' and i + 1 < len(parts):
+                            ip = parts[i + 1]
+                            self.get_logger().info(f"📍 Detected Windows IP (gateway): {ip}")
+                            return ip
+        except Exception as e:
+            self.get_logger().warn(f"⚠️ Could not detect Windows IP: {e}")
+        
+        # Fallback
+        return "172.27.144.1"
         
     def connect_to_bridge(self):
         """Connect to Arduino bridge on Windows"""
         retry_count = 0
         while rclpy.ok() and retry_count < 10:
             try:
-                self.get_logger().info(f"🔍 Attempt {retry_count + 1}: Connecting to {self.windows_ip}:9999")
+                self.get_logger().info(f"🔍 Attempt {retry_count + 1}/10: Connecting to {self.windows_ip}:{self.tcp_port}")
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.socket.settimeout(5)
-                self.socket.connect((self.windows_ip, 9999))
+                self.socket.connect((self.windows_ip, self.tcp_port))
                 
                 self.connected = True
                 self.get_logger().info("✅ Connected to Arduino bridge!")
@@ -121,6 +135,15 @@ class NetworkOdometryNode(Node):
                                     self.vx = vel_x
                                     self.vy = vel_y
                                     self.vth = vel_angular
+                                    
+                                    # Log occasionally (every 20th message)
+                                    if hasattr(self, '_msg_count'):
+                                        self._msg_count += 1
+                                    else:
+                                        self._msg_count = 1
+                                    
+                                    if self._msg_count % 20 == 0:
+                                        self.get_logger().info(f"📊 Odom: x={pos_x:.3f}, y={pos_y:.3f}, θ={heading:.3f}")
                                     
                                 except ValueError as e:
                                     self.get_logger().warn(f"⚠️ Parse error: {e}")

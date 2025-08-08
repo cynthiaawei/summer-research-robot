@@ -5,24 +5,10 @@ import threading
 import time
 
 def arduino_bridge():
-    # Find Arduino COM port
-    import serial.tools.list_ports
-    arduino_port = None
+    # Arduino COM port - CHANGE THIS to your port!
+    arduino_port = 'COM12'  # Your Arduino port
     
-    print("🔍 Looking for Arduino...")
-    for port in serial.tools.list_ports.comports():
-        if 'Arduino' in port.description or 'USB Serial' in port.description:
-            arduino_port = port.device
-            break
-    
-    if not arduino_port:
-        print("❌ Arduino not found!")
-        print("Available ports:")
-        for port in serial.tools.list_ports.comports():
-            print(f"  {port.device} - {port.description}")
-        return
-    
-    print(f"✅ Found Arduino on {arduino_port}")
+    print(f"🔍 Looking for Arduino on {arduino_port}...")
     
     # Connect to Arduino
     try:
@@ -31,14 +17,24 @@ def arduino_bridge():
         print(f"✅ Connected to Arduino on {arduino_port}")
     except Exception as e:
         print(f"❌ Failed to connect: {e}")
+        print("Available ports:")
+        import serial.tools.list_ports
+        for port in serial.tools.list_ports.comports():
+            print(f"  {port.device} - {port.description}")
         return
     
-    # Start TCP server for WSL2
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('0.0.0.0', 9999))
-    server.listen(1)
-    print("🌐 Waiting for WSL2 connection on port 9999...")
+    # Start TCP server for WSL2 - USING PORT 8888
+    try:
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(('0.0.0.0', 8888))  # Using port 8888 instead of 9999
+        server.listen(1)
+        print("🌐 TCP Server started successfully")
+        print("🌐 Waiting for WSL2 connection on port 8888...")
+    except Exception as e:
+        print(f"❌ Failed to start server: {e}")
+        arduino.close()
+        return
     
     try:
         while True:
@@ -51,7 +47,8 @@ def arduino_bridge():
                     if arduino.in_waiting > 0:
                         data = arduino.readline()
                         if data:
-                            print(f"Arduino: {data.decode().strip()}")
+                            decoded = data.decode().strip()
+                            print(f"Arduino: {decoded}")
                             client.send(data)
                     
                     # Forward WSL2 commands to Arduino
