@@ -1,5 +1,6 @@
 # arduino_bridge.py - Run this on Windows
 import serial
+import serial.tools.list_ports
 import socket
 import threading
 import time
@@ -18,7 +19,6 @@ def arduino_bridge():
     except Exception as e:
         print(f"❌ Failed to connect: {e}")
         print("Available ports:")
-        import serial.tools.list_ports
         for port in serial.tools.list_ports.comports():
             print(f"  {port.device} - {port.description}")
         return
