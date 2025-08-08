@@ -161,9 +161,9 @@ class NetworkOdometryNode(Node):
         odom.twist.twist.linear.y = self.vy
         odom.twist.twist.angular.z = self.vth
         
-        # Add covariance
-        odom.pose.covariance = [0] * 36
-        odom.twist.covariance = [0] * 36
+        # Add covariance (must be floats!)
+        odom.pose.covariance = [0.0] * 36
+        odom.twist.covariance = [0.0] * 36
         odom.pose.covariance[0] = 0.1   # x
         odom.pose.covariance[7] = 0.1   # y  
         odom.pose.covariance[35] = 0.2  # yaw
