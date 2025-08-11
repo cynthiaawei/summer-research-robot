@@ -74,7 +74,7 @@
                        origin_y="${-0.235-(wheel_length/2.0)*cos(pi/3)}" 
                        axis="${sin(pi/6)} ${cos(pi/6)} 0"/>
     
-    <link name="lidar">
+    <link name="laser">
         <visual>
             <geometry>
                 <cylinder radius="0.05" length="0.04"/>
@@ -82,9 +82,9 @@
             <material name="red"/>
         </visual>
     </link>
-    <joint name="lidar_to_upper_body_joint" type="fixed">
+    <joint name="laser_to_upper_body_joint" type="fixed">
         <parent link="upper_body"/>
-        <child link="lidar"/>
+        <child link="laser"/>
         <origin xyz="0 0 0.265" roy="0 0 0"/>
     </joint>
 </robot>

@@ -1,10 +1,10 @@
 CMakeFiles/rplidar_node.dir/sdk/src/sl_crc.cpp.o: \
- /home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/src/sl_crc.cpp \
+ /home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/src/sl_crc.cpp \
  /usr/include/stdc-predef.h \
- /home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_crc.h \
- /home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_lidar_cmd.h \
- /home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_lidar_protocol.h \
- /home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_types.h \
+ /home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_crc.h \
+ /home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_lidar_cmd.h \
+ /home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_lidar_protocol.h \
+ /home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include/sl_types.h \
  /usr/include/c++/11/cstdint \
  /usr/include/x86_64-linux-gnu/c++/11/bits/c++config.h \
  /usr/include/x86_64-linux-gnu/c++/11/bits/os_defines.h \
