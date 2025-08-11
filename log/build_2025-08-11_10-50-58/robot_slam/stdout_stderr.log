@@ -1,0 +1,37 @@
+running egg_info
+creating ../../../../build/robot_slam/robot_slam.egg-info
+writing ../../../../build/robot_slam/robot_slam.egg-info/PKG-INFO
+writing dependency_links to ../../../../build/robot_slam/robot_slam.egg-info/dependency_links.txt
+writing entry points to ../../../../build/robot_slam/robot_slam.egg-info/entry_points.txt
+writing requirements to ../../../../build/robot_slam/robot_slam.egg-info/requires.txt
+writing top-level names to ../../../../build/robot_slam/robot_slam.egg-info/top_level.txt
+writing manifest file '../../../../build/robot_slam/robot_slam.egg-info/SOURCES.txt'
+reading manifest file '../../../../build/robot_slam/robot_slam.egg-info/SOURCES.txt'
+writing manifest file '../../../../build/robot_slam/robot_slam.egg-info/SOURCES.txt'
+running build
+running build_py
+creating /home/krrish/summer-research-robot/build/robot_slam/build
+creating /home/krrish/summer-research-robot/build/robot_slam/build/lib
+creating /home/krrish/summer-research-robot/build/robot_slam/build/lib/robot_slam
+copying robot_slam/__init__.py -> /home/krrish/summer-research-robot/build/robot_slam/build/lib/robot_slam
+copying robot_slam/odom_node.py -> /home/krrish/summer-research-robot/build/robot_slam/build/lib/robot_slam
+running install
+running install_lib
+creating /home/krrish/summer-research-robot/install/robot_slam/lib/python3.10/site-packages/robot_slam
+copying /home/krrish/summer-research-robot/build/robot_slam/build/lib/robot_slam/__init__.py -> /home/krrish/summer-research-robot/install/robot_slam/lib/python3.10/site-packages/robot_slam
+copying /home/krrish/summer-research-robot/build/robot_slam/build/lib/robot_slam/odom_node.py -> /home/krrish/summer-research-robot/install/robot_slam/lib/python3.10/site-packages/robot_slam
+byte-compiling /home/krrish/summer-research-robot/install/robot_slam/lib/python3.10/site-packages/robot_slam/__init__.py to __init__.cpython-310.pyc
+byte-compiling /home/krrish/summer-research-robot/install/robot_slam/lib/python3.10/site-packages/robot_slam/odom_node.py to odom_node.cpython-310.pyc
+running install_data
+creating /home/krrish/summer-research-robot/install/robot_slam/share/ament_index
+creating /home/krrish/summer-research-robot/install/robot_slam/share/ament_index/resource_index
+creating /home/krrish/summer-research-robot/install/robot_slam/share/ament_index/resource_index/packages
+copying resource/robot_slam -> /home/krrish/summer-research-robot/install/robot_slam/share/ament_index/resource_index/packages
+copying package.xml -> /home/krrish/summer-research-robot/install/robot_slam/share/robot_slam
+creating /home/krrish/summer-research-robot/install/robot_slam/share/robot_slam/launch
+copying launch/slam.launch.xml -> /home/krrish/summer-research-robot/install/robot_slam/share/robot_slam/launch
+running install_egg_info
+Copying ../../../../build/robot_slam/robot_slam.egg-info to /home/krrish/summer-research-robot/install/robot_slam/lib/python3.10/site-packages/robot_slam-0.0.0-py3.10.egg-info
+running install_scripts
+Installing odom_node script to /home/krrish/summer-research-robot/install/robot_slam/lib/robot_slam
+writing list of installed files to '/home/krrish/summer-research-robot/build/robot_slam/install.log'

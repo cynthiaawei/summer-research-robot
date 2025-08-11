@@ -1,0 +1,42 @@
+[0.031s] Invoking command in '/home/krrish/summer-research-robot/build/my_package': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/krrish/summer-research-robot/2025sRobot/src/my_package -DCMAKE_INSTALL_PREFIX=/home/krrish/summer-research-robot/install/my_package
+[0.301s] -- The C compiler identification is GNU 11.4.0
+[0.734s] -- The CXX compiler identification is GNU 11.4.0
+[1.063s] -- Detecting C compiler ABI info
+[1.194s] -- Detecting C compiler ABI info - done
+[1.198s] -- Check for working C compiler: /usr/bin/cc - skipped
+[1.198s] -- Detecting C compile features
+[1.198s] -- Detecting C compile features - done
+[1.200s] -- Detecting CXX compiler ABI info
+[1.352s] -- Detecting CXX compiler ABI info - done
+[1.357s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[1.357s] -- Detecting CXX compile features
+[1.357s] -- Detecting CXX compile features - done
+[1.359s] -- Found ament_cmake: 1.3.12 (/opt/ros/humble/share/ament_cmake/cmake)
+[1.461s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[1.520s] -- Found ament_lint_auto: 0.12.14 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[1.572s] -- Added test 'lint_cmake' to check CMake code style
+[1.573s] -- Added test 'xmllint' to check XML markup files
+[1.574s] -- Configuring done
+[1.577s] -- Generating done
+[1.578s] -- Build files have been written to: /home/krrish/summer-research-robot/build/my_package
+[1.583s] Invoked command in '/home/krrish/summer-research-robot/build/my_package' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/krrish/summer-research-robot/2025sRobot/src/my_package -DCMAKE_INSTALL_PREFIX=/home/krrish/summer-research-robot/install/my_package
+[1.584s] Invoking command in '/home/krrish/summer-research-robot/build/my_package': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/krrish/summer-research-robot/build/my_package -- -j32 -l32
+[1.608s] Invoked command in '/home/krrish/summer-research-robot/build/my_package' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/krrish/summer-research-robot/build/my_package -- -j32 -l32
+[1.610s] Invoking command in '/home/krrish/summer-research-robot/build/my_package': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/krrish/summer-research-robot/build/my_package
+[1.614s] -- Install configuration: ""
+[1.614s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/ament_index/resource_index/package_run_dependencies/my_package
+[1.614s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/ament_index/resource_index/parent_prefix_path/my_package
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/environment/ament_prefix_path.sh
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/environment/ament_prefix_path.dsv
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/environment/path.sh
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/environment/path.dsv
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/local_setup.bash
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/local_setup.sh
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/local_setup.zsh
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/local_setup.dsv
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/package.dsv
+[1.615s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/ament_index/resource_index/packages/my_package
+[1.616s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/cmake/my_packageConfig.cmake
+[1.616s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/cmake/my_packageConfig-version.cmake
+[1.616s] -- Installing: /home/krrish/summer-research-robot/install/my_package/share/my_package/package.xml
+[1.617s] Invoked command in '/home/krrish/summer-research-robot/build/my_package' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/krrish/summer-research-robot/build/my_package

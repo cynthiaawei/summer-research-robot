@@ -1,0 +1,6 @@
+Invoking command in '/home/krrish/summer-research-robot/build/my_package': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/krrish/summer-research-robot/2025sRobot/src/my_package -DCMAKE_INSTALL_PREFIX=/home/krrish/summer-research-robot/install/my_package
+Invoked command in '/home/krrish/summer-research-robot/build/my_package' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/krrish/summer-research-robot/2025sRobot/src/my_package -DCMAKE_INSTALL_PREFIX=/home/krrish/summer-research-robot/install/my_package
+Invoking command in '/home/krrish/summer-research-robot/build/my_package': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/krrish/summer-research-robot/build/my_package -- -j32 -l32
+Invoked command in '/home/krrish/summer-research-robot/build/my_package' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/krrish/summer-research-robot/build/my_package -- -j32 -l32
+Invoking command in '/home/krrish/summer-research-robot/build/my_package': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/krrish/summer-research-robot/build/my_package
+Invoked command in '/home/krrish/summer-research-robot/build/my_package' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/krrish/summer-research-robot/build/my_package

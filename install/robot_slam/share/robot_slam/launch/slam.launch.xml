@@ -1,0 +1,23 @@
+<launch>
+    <!-- Include your existing robot display -->
+    <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
+    
+    <!-- RPLidar C1 - Use your existing working launch file -->
+    <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+    
+    <!-- Arduino Odometry Node -->
+    <node pkg="robot_slam" exec="odom_node" 
+          name="odom_node" output="screen"/>
+    
+    <!-- SLAM Toolbox - Creates the map -->
+    <node pkg="slam_toolbox" exec="sync_slam_toolbox_node" 
+          name="slam_toolbox" output="screen">
+        <param name="odom_frame" value="odom"/>
+        <param name="base_frame" value="base_footprint"/>
+        <param name="scan_topic" value="/scan"/>
+        <param name="mode" value="mapping"/>
+        <param name="resolution" value="0.05"/>
+        <param name="max_laser_range" value="12.0"/>
+        <param name="minimum_time_interval" value="0.5"/>
+    </node>
+</launch>

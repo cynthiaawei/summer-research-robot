@@ -1,0 +1,6 @@
+Invoking command in '/home/krrish/summer-research-robot/build/articubot_one': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/krrish/summer-research-robot/articubot_one/articubot_one -DCMAKE_INSTALL_PREFIX=/home/krrish/summer-research-robot/install/articubot_one
+Invoked command in '/home/krrish/summer-research-robot/build/articubot_one' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /home/krrish/summer-research-robot/articubot_one/articubot_one -DCMAKE_INSTALL_PREFIX=/home/krrish/summer-research-robot/install/articubot_one
+Invoking command in '/home/krrish/summer-research-robot/build/articubot_one': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/krrish/summer-research-robot/build/articubot_one -- -j32 -l32
+Invoked command in '/home/krrish/summer-research-robot/build/articubot_one' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /home/krrish/summer-research-robot/build/articubot_one -- -j32 -l32
+Invoking command in '/home/krrish/summer-research-robot/build/articubot_one': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/krrish/summer-research-robot/build/articubot_one
+Invoked command in '/home/krrish/summer-research-robot/build/articubot_one' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /home/krrish/summer-research-robot/build/articubot_one
