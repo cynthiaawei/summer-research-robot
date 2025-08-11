@@ -12,12 +12,16 @@
     <!-- SLAM Toolbox - Creates the map -->
     <node pkg="slam_toolbox" exec="sync_slam_toolbox_node" 
           name="slam_toolbox" output="screen">
-        <param name="odom_frame" value="odom"/>
-        <param name="base_frame" value="base_footprint"/>
-        <param name="scan_topic" value="/scan"/>
-        <param name="mode" value="mapping"/>
-        <param name="resolution" value="0.05"/>
-        <param name="max_laser_range" value="12.0"/>
-        <param name="minimum_time_interval" value="0.5"/>
+    <param name="odom_frame" value="odom"/>
+    <param name="base_frame" value="base_footprint"/>
+    <param name="scan_topic" value="/scan"/>
+    <param name="mode" value="mapping"/>
+    <param name="resolution" value="0.05"/>
+    <param name="minimum_time_interval" value="0.2"/>
+    <param name="minimum_travel_distance" value="0.02"/>
+    <param name="scan_buffer_size" value="1000"/>
+    <param name="tf_buffer_duration" value="60.0"/>
+    <param name="transform_timeout" value="1.0"/>
+    <param name="use_sim_time" value="false"/>
     </node>
 </launch>

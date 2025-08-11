@@ -85,6 +85,6 @@
     <joint name="laser_to_upper_body_joint" type="fixed">
         <parent link="upper_body"/>
         <child link="laser"/>
-        <origin xyz="0 0 0.265" roy="0 0 0"/>
+        <origin xyz="0 0 0.265" rpy="0 0 0"/>
     </joint>
 </robot>
