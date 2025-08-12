@@ -4,18 +4,15 @@
     
     <!-- RPLidar C1 - Use your existing working launch file -->
     <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+
     
-    <!-- Arduino Odometry Node -->
-    <node pkg="robot_slam" exec="odom_node" 
-          name="odom_node" output="screen"/>
-    
-    <!-- SLAM Toolbox - Creates the map -->
+    <!-- SLAM Toolbox - Loads old map and keeps mapping -->
     <node pkg="slam_toolbox" exec="sync_slam_toolbox_node" 
           name="slam_toolbox" output="screen">
         <param name="odom_frame" value="odom"/>
         <param name="base_frame" value="base_footprint"/>
         <param name="scan_topic" value="/scan"/>
-        <param name="mode" value="mapping"/>
+        <param name="mode" value="localization"/>
         <param name="resolution" value="0.05"/>
         <param name="max_laser_range" value="12.0"/>
         <param name="minimum_time_interval" value="0.1"/>
@@ -24,5 +21,9 @@
         <param name="tf_buffer_duration" value="30.0"/>
         <param name="transform_timeout" value="0.2"/>
         <param name="use_sim_time" value="false"/>
+    <!-- Map loading - WITHOUT .posegraph extension! -->
+        <param name="map_file_name" 
+               value="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
+        <param name="map_start_at_dock" value="true"/>
     </node>
 </launch>

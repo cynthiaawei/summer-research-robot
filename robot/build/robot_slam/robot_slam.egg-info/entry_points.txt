@@ -1,0 +1,3 @@
+[console_scripts]
+odom_node = robot_slam.odom_node:main
+
