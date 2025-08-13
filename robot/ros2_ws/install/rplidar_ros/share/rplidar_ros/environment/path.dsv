@@ -1,1 +1,1 @@
-prepend-non-duplicate-if-exists;PATH;bin
+/home/jenny/summer-research-robot/robot/ros2_ws/build/rplidar_ros/ament_cmake_environment_hooks/path.dsv

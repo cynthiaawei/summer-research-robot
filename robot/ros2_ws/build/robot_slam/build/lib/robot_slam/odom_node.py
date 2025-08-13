@@ -44,12 +44,8 @@ class NetworkOdometryNode(Node):
         # Network connection - HARDCODED IP
         self.socket = None
         self.connected = False
-        self.windows_ip = "172.31.176.1"  # Hardcoded since nc works with this
+        self.windows_ip = "172.27.144.1"  # Hardcoded since nc works with this
         self.tcp_port = 8888
-        
-        # Timer for publishing - Only when data changes significantly
-        # Remove the regular timer - we'll publish on data change only
-        # self.create_timer(0.2, self.publish_odometry)  # Disabled
         
         self.get_logger().info("🤖 Network Arduino Odometry node started")
         self.get_logger().info(f"🌐 Connecting to Windows bridge at {self.windows_ip}:{self.tcp_port}")
@@ -60,15 +56,12 @@ class NetworkOdometryNode(Node):
         
     def filter_angular_velocity(self, vel_angular):
         """Filter out small angular velocities and smooth the signal"""
-        # Add to history
         self.angular_velocity_history.append(vel_angular)
         if len(self.angular_velocity_history) > self.history_size:
             self.angular_velocity_history.pop(0)
         
-        # Calculate moving average
         avg_angular = sum(self.angular_velocity_history) / len(self.angular_velocity_history)
         
-        # Apply threshold - ignore small movements
         if abs(avg_angular) < self.angular_velocity_threshold:
             return 0.0
         
@@ -86,11 +79,7 @@ class NetworkOdometryNode(Node):
                 
                 self.connected = True
                 self.get_logger().info("✅ Connected to Arduino bridge!")
-                
-                # Send PING to test
                 self.socket.send(b'PING\n')
-                
-                # Start reading data
                 self.read_network_data()
                 break
                 
@@ -116,13 +105,11 @@ class NetworkOdometryNode(Node):
                 if data:
                     buffer += data
                     
-                    # Process complete lines
                     while '\n' in buffer:
                         line, buffer = buffer.split('\n', 1)
                         line = line.strip()
                         
                         if line.startswith('ODOM:'):
-                            # Parse: ODOM:pos_x,pos_y,heading,vel_x,vel_y,vel_angular
                             parts = line.replace('ODOM:', '').split(',')
                             if len(parts) >= 6:
                                 try:
@@ -133,43 +120,31 @@ class NetworkOdometryNode(Node):
                                     vel_y = float(parts[4])
                                     vel_angular = float(parts[5])
                                     
-                                    # Filter angular velocity to reduce drift
                                     filtered_vel_angular = self.filter_angular_velocity(vel_angular)
                                     
-                                    # Check if data has changed significantly
                                     pos_changed = (abs(pos_x - self.last_x) > self.position_threshold or 
                                                  abs(pos_y - self.last_y) > self.position_threshold)
                                     angle_changed = abs(heading - self.last_theta) > self.angle_threshold
                                     
-                                    # Only update and publish if significant change
                                     if pos_changed or angle_changed or abs(filtered_vel_angular) > 0.01:
-                                        # Update robot state
                                         self.x = pos_x
                                         self.y = pos_y
                                         self.theta = heading
                                         self.vx = vel_x
                                         self.vy = vel_y
                                         self.vth = filtered_vel_angular
-                                        
-                                        # Publish odometry immediately
                                         self.publish_odometry()
-                                        
-                                        # Update last values
                                         self.last_x = pos_x
                                         self.last_y = pos_y
                                         self.last_theta = heading
                                         
-                                        # Log occasionally (every 40th message to reduce spam)
                                         if hasattr(self, '_msg_count'):
                                             self._msg_count += 1
                                         else:
                                             self._msg_count = 1
                                         
-                                        if self._msg_count % 20 == 0:  # More frequent logging for changes
+                                        if self._msg_count % 20 == 0:
                                             self.get_logger().info(f"📊 Odom: x={pos_x:.3f}, y={pos_y:.3f}, θ={heading:.3f}, ω={filtered_vel_angular:.3f}")
-                                    else:
-                                        # Data hasn't changed significantly - don't publish
-                                        pass
                                     
                                 except ValueError as e:
                                     self.get_logger().warn(f"⚠️ Parse error: {e}")
@@ -185,46 +160,38 @@ class NetworkOdometryNode(Node):
                 break
                 
     def euler_to_quaternion(self, yaw):
-        """Convert yaw to quaternion"""
         qz = math.sin(yaw / 2.0)
         qw = math.cos(yaw / 2.0)
         return Quaternion(x=0.0, y=0.0, z=qz, w=qw)
         
     def publish_odometry(self):
-        """Publish odometry message and TF"""
         current_time = self.get_clock().now()
         
-        # Create odometry message
         odom = Odometry()
         odom.header.stamp = current_time.to_msg()
         odom.header.frame_id = 'odom'
         odom.child_frame_id = 'base_footprint'
         
-        # Position
         odom.pose.pose.position.x = self.x
         odom.pose.pose.position.y = self.y
         odom.pose.pose.position.z = 0.0
         odom.pose.pose.orientation = self.euler_to_quaternion(self.theta)
         
-        # Velocity (with filtered angular velocity)
         odom.twist.twist.linear.x = self.vx
         odom.twist.twist.linear.y = self.vy
-        odom.twist.twist.angular.z = self.vth  # This is now filtered
+        odom.twist.twist.angular.z = self.vth
         
-        # Add covariance (must be floats!)
         odom.pose.covariance = [0.0] * 36
         odom.twist.covariance = [0.0] * 36
-        odom.pose.covariance[0] = 0.1   # x
-        odom.pose.covariance[7] = 0.1   # y  
-        odom.pose.covariance[35] = 0.2  # yaw
-        odom.twist.covariance[0] = 0.1   # vx
-        odom.twist.covariance[7] = 0.1   # vy
-        odom.twist.covariance[35] = 0.2  # vyaw
+        odom.pose.covariance[0] = 0.1
+        odom.pose.covariance[7] = 0.1
+        odom.pose.covariance[35] = 0.2
+        odom.twist.covariance[0] = 0.1
+        odom.twist.covariance[7] = 0.1
+        odom.twist.covariance[35] = 0.2
         
-        # Publish
         self.odom_pub.publish(odom)
         
-        # TF
         tf_msg = TransformStamped()
         tf_msg.header.stamp = current_time.to_msg()
         tf_msg.header.frame_id = 'odom'
@@ -237,12 +204,13 @@ class NetworkOdometryNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    node = NetworkOdometryNode()
     try:
-        node = NetworkOdometryNode()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
+        node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':

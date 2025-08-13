@@ -3,16 +3,44 @@
     <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
     
     <!-- RPLidar C1 - Use your existing working launch file -->
-    <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+    <!-- <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/> -->
     
     <!-- Arduino Odometry Node -->
-    <node pkg="robot_slam" exec="odom_node" 
-          name="odom_node" output="screen"/>
+    <!-- <node pkg="robot_slam" exec="odom_node"  -->
+          <!-- name="odom_node" output="screen"/> -->
     
     <!-- SLAM Toolbox - Creates the map -->
-    <node pkg="slam_toolbox" exec="sync_slam_toolbox_node" 
+<param name="odom_frame" value="odom"/>
+    <param name="mode" value="localization"/>  <!-- Must be "localization" -->
+    <param name="map_file_name" value="/full/path/to/map"/> <!-- No extension -->
+    <param name="deserialize" value="true"/>   <!-- Explicitly enable loading -->
+
+    <param name="base_frame" value="base_footprint"/>
+    <param name="scan_topic" value="/scan"/>
+    <param name="mode" value="localization"/>  <!-- Changed from mapping to localization -->
+    <param name="resolution" value="0.05"/>
+    <param name="max_laser_range" value="12.0"/>
+    <param name="minimum_time_interval" value="0.1"/>
+    <param name="minimum_travel_distance" value="0.0"/>
+    <param name="scan_buffer_size" value="1000"/>
+    <param name="tf_buffer_duration" value="30.0"/>
+    <param name="transform_timeout" value="0.2"/>
+    <param name="use_sim_time" value="false"/>
+    
+    <!-- New parameters for map deserialization -->
+    <param name="map_file_name" value="/home/jenny/summer-research-robot/robot/ros2_ws/Fuckupjenny"/>  <!-- Without file extension -->
+    <param name="map_start_pose" value="[0.0, 0.0, 0.0]"/>   <!-- Optional: Initial pose -->
+    <param name="map_start_at_dock" value="false"/>          <!-- Set true if using docking -->
+    <param name="deserialize" value="true"/>                 <!-- Explicit deserialization flag -->
+    
+    <!-- Optional performance parameters -->
+    <param name="enable_interactive_mode" value="true"/>
+    <param name="position_covariance_scale" value="1.0"/>
+
+        <!-- <node pkg="slam_toolbox" exec="sync_slam_toolbox_node" 
           name="slam_toolbox" output="screen">
         <param name="odom_frame" value="odom"/>
+        
         <param name="base_frame" value="base_footprint"/>
         <param name="scan_topic" value="/scan"/>
         <param name="mode" value="mapping"/>
@@ -24,5 +52,7 @@
         <param name="tf_buffer_duration" value="30.0"/>
         <param name="transform_timeout" value="0.2"/>
         <param name="use_sim_time" value="false"/>
+        <param name="map_file_name" value="/home/jenny/summer-research-robot/robot/ros2_ws/Fuckupjenny"/>
+         -->
     </node>
 </launch>
