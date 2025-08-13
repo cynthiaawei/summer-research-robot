@@ -1,31 +1,50 @@
-<launch>
-    <!-- Include your existing robot display -->
-    <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
-    
-    <!-- RPLidar C1 - Use your existing working launch file -->
-    <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
 
-    
-    <!-- SLAM Toolbox - Loads old map and keeps mapping -->
-    <node pkg="slam_toolbox" exec="localization_slam_toolbox_node" 
-          name="slam_toolbox" output="screen">
-        <param name="odom_frame" value="odom"/>
-        <param name="base_frame" value="base_footprint"/>
-        <param name="scan_topic" value="/scan"/>
-        <param name="mode" value="localization"/>
-        <param name="resolution" value="0.05"/>
-        <param name="max_laser_range" value="12.0"/>
-        <param name="minimum_time_interval" value="0.1"/>
-        <param name="minimum_travel_distance" value="0.0"/>
-        <param name="scan_buffer_size" value="1000"/>
-        <param name="tf_buffer_duration" value="30.0"/>
-        <param name="transform_timeout" value="0.2"/>
-        <param name="use_sim_time" value="false"/>
-        <param name="minimum_travel_distance" value="0.0"/>  <!-- Don't require movement -->
-        <param name="minimum_travel_heading" value="0.0"/>   <!-- Don't require rotation -->
-    <!-- Map loading - WITHOUT .posegraph extension! -->
-        <param name="map_file_name" 
-               value="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
-        <param name="start_at_current_odom" value="true"/>
-    </node>
+<?xml version="1.0"?>
+<launch>
+  <!-- ===== ARGS ===== -->
+  <!-- Base path (no extension) of your serialized graph: v1.posegraph / v1.data -->
+  <arg name="map_path"   default="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
+  <!-- Initial guess for LOCALIZE_AT_POSE (theta in radians) -->
+  <arg name="init_x"     default="0.0"/>
+  <arg name="init_y"     default="0.0"/>
+  <arg name="init_theta" default="0.0"/>
+  <arg name="use_sim_time" default="false"/>
+
+  <!-- ===== Your existing includes ===== -->
+  <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
+  <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+
+  <!-- ===== SLAM Toolbox: mapping (will continue building the map) ===== -->
+  <node pkg="slam_toolbox" exec="async_slam_toolbox_node"
+        name="slam_toolbox" output="screen">
+    <!-- Frames / topics -->
+    <param name="map_frame"  value="map"/>
+    <param name="odom_frame" value="odom"/>
+    <param name="base_frame" value="base_footprint"/>
+    <param name="scan_topic" value="/scan"/>
+
+    <!-- Mapping mode -->
+    <param name="mode" value="mapping"/>
+
+    <!-- Common mapping params (tune as needed) -->
+    <param name="resolution" value="0.05"/>
+    <param name="max_laser_range" value="12.0"/>
+    <param name="minimum_time_interval" value="0.1"/>
+    <param name="minimum_travel_distance" value="0.0"/>
+    <param name="minimum_travel_heading" value="0.0"/>
+    <param name="tf_buffer_duration" value="30.0"/>
+    <param name="transform_timeout" value="0.2"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+
+  <!-- ===== After node starts: LOCALIZE to loaded graph, then continue mapping =====
+       We wrap the service call in a timer to ensure the service exists.
+       Using <executable> (not execute_process) to avoid XML frontend errors.
+  -->
+  <timer period="2.0">
+    <executable
+      shell="true"
+      output="screen"
+      cmd='ros2 service call /slam_toolbox/deserialize_map slam_toolbox/srv/DeserializePoseGraph "{filename: &quot;$(var map_path)&quot;, match_type: 3, initial_pose: {x: $(var init_x), y: $(var init_y), theta: $(var init_theta)}}"'/>
+  </timer>
 </launch>

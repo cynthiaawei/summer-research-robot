@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- ===== ARGS ===== -->
+  <arg name="map_path"       default="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
+  <arg name="start_at_dock"  default="true"/>   <!-- if false, uses map_start_pose below -->
+  <arg name="init_x"         default="0.0"/>
+  <arg name="init_y"         default="0.0"/>
+  <arg name="init_theta"     default="0.0"/>    <!-- radians -->
+  <arg name="use_sim_time"   default="false"/>
+  <arg name="launch_rviz"    default="false"/>  <!-- set true to auto-open RViz -->
+  <!-- Use Nav2's built-in params so you don't need your own file -->
+  <arg name="nav2_params"    default="$(find-pkg-share nav2_bringup)/params/nav2_params.yaml"/>
+
+  <!-- ===== Your existing includes (robot model + LiDAR) ===== -->
+  <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
+  <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+
+  <!-- Bridge base_footprint (your stack) to base_link (Nav2 defaults) -->
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="base_footprint_to_base_link"
+        args="0 0 0 0 0 0 base_footprint base_link" output="screen"/>
+
+  <!-- ===== SLAM Toolbox: mapping + load previous graph ===== -->
+  <node pkg="slam_toolbox" exec="async_slam_toolbox_node"
+        name="slam_toolbox" output="screen">
+    <param name="mode"        value="mapping"/>
+    <param name="map_frame"   value="map"/>
+    <param name="odom_frame"  value="odom"/>
+    <param name="base_frame"  value="base_footprint"/>
+    <param name="scan_topic"  value="/scan"/>
+
+    <!-- Load your old graph at startup (base path, no extension) -->
+    <param name="map_file_name" value="$(var map_path)"/>
+
+    <!-- Choose ONE: start at dock OR explicit pose -->
+    <param if="$(var start_at_dock)"   name="map_start_at_dock" value="true"/>
+    <param unless="$(var start_at_dock)" name="map_start_pose" value="[ $(var init_x), $(var init_y), $(var init_theta) ]"/>
+
+    <!-- Typical mapping params -->
+    <param name="resolution"              value="0.05"/>
+    <param name="max_laser_range"         value="12.0"/>
+    <param name="minimum_time_interval"   value="0.1"/>
+    <param name="minimum_travel_distance" value="0.0"/>
+    <param name="minimum_travel_heading"  value="0.0"/>
+    <param name="tf_buffer_duration"      value="30.0"/>
+    <param name="transform_timeout"       value="0.2"/>
+    <param name="use_sim_time"            value="$(var use_sim_time)"/>
+  </node>
+
+  <!-- ===== Nav2 bringup (no AMCL/map_server; costmaps subscribe to /map from SLAM) ===== -->
+  <include file="$(find-pkg-share nav2_bringup)/launch/bringup_launch.py">
+    <arg name="slam"           value="False"/>
+    <arg name="map"            value=""/>  <!-- empty = no map_server/AMCL -->
+    <arg name="use_sim_time"   value="$(var use_sim_time)"/>
+    <arg name="params_file"    value="$(var nav2_params)"/>
+    <arg name="autostart"      value="True"/>
+  </include>
+
+  <!-- ===== Optional RViz (Nav2 default view) ===== -->
+  <node if="$(var launch_rviz)" pkg="rviz2" exec="rviz2" name="rviz2" output="screen"
+        args="-d $(find-pkg-share nav2_bringup)/rviz/nav2_default_view.rviz">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>
