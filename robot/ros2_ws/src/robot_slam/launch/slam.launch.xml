@@ -7,7 +7,7 @@
 
     
     <!-- SLAM Toolbox - Loads old map and keeps mapping -->
-    <node pkg="slam_toolbox" exec="sync_slam_toolbox_node" 
+    <node pkg="slam_toolbox" exec="localization_slam_toolbox_node" 
           name="slam_toolbox" output="screen">
         <param name="odom_frame" value="odom"/>
         <param name="base_frame" value="base_footprint"/>
@@ -21,9 +21,11 @@
         <param name="tf_buffer_duration" value="30.0"/>
         <param name="transform_timeout" value="0.2"/>
         <param name="use_sim_time" value="false"/>
+        <param name="minimum_travel_distance" value="0.0"/>  <!-- Don't require movement -->
+        <param name="minimum_travel_heading" value="0.0"/>   <!-- Don't require rotation -->
     <!-- Map loading - WITHOUT .posegraph extension! -->
         <param name="map_file_name" 
                value="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
-        <param name="map_start_at_dock" value="true"/>
+        <param name="start_at_current_odom" value="true"/>
     </node>
 </launch>
