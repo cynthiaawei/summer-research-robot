@@ -1,31 +1,44 @@
 <launch>
-    <!-- Include your existing robot display -->
-    <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
-    
-    <!-- RPLidar C1 - Use your existing working launch file -->
-    <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+  <!-- Existing robot display -->
+  <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
 
-    
-    <!-- SLAM Toolbox - Loads old map and keeps mapping -->
-    <node pkg="slam_toolbox" exec="localization_slam_toolbox_node" 
-          name="slam_toolbox" output="screen">
-        <param name="odom_frame" value="odom"/>
-        <param name="base_frame" value="base_footprint"/>
-        <param name="scan_topic" value="/scan"/>
-        <param name="mode" value="localization"/>
-        <param name="resolution" value="0.05"/>
-        <param name="max_laser_range" value="12.0"/>
-        <param name="minimum_time_interval" value="0.1"/>
-        <param name="minimum_travel_distance" value="0.0"/>
-        <param name="scan_buffer_size" value="1000"/>
-        <param name="tf_buffer_duration" value="30.0"/>
-        <param name="transform_timeout" value="0.2"/>
-        <param name="use_sim_time" value="false"/>
-        <param name="minimum_travel_distance" value="0.0"/>  <!-- Don't require movement -->
-        <param name="minimum_travel_heading" value="0.0"/>   <!-- Don't require rotation -->
-    <!-- Map loading - WITHOUT .posegraph extension! -->
-        <param name="map_file_name" 
-               value="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
-        <param name="start_at_current_odom" value="true"/>
-    </node>
+  <!-- RPLidar C1 -->
+  <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+
+  <!-- SLAM Toolbox: continue mapping on top of a loaded graph -->
+  <node pkg="slam_toolbox" exec="async_slam_toolbox_node"
+        name="slam_toolbox" output="screen">
+
+    <!-- Frames / topics -->
+    <param name="map_frame"  value="map"/>
+    <param name="odom_frame" value="odom"/>
+    <param name="base_frame" value="base_footprint"/>
+    <param name="scan_topic" value="/scan"/>
+
+    <!-- Mapping mode (not localization) -->
+    <param name="mode" value="mapping"/>
+
+    <!-- Typical mapping params -->
+    <param name="resolution" value="0.05"/>
+    <param name="max_laser_range" value="12.0"/>
+    <param name="minimum_time_interval" value="0.1"/>
+    <param name="minimum_travel_distance" value="0.0"/>
+    <param name="minimum_travel_heading" value="0.0"/>
+    <param name="tf_buffer_duration" value="30.0"/>
+    <param name="transform_timeout" value="0.2"/>
+    <param name="use_sim_time" value="false"/>
+
+    <!-- Load previous serialized pose-graph on startup (NO extension) -->
+    <param name="map_file_name"
+           value="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
+
+    <!-- Start aligned to the map's dock (first node) so orientation matches -->
+    <param name="map_start_at_dock" value="true"/>
+    <param name="map_start_pose" value="[0.0, 0.0, 3.14159]"/>
+
+    <!-- If you ever want to start at an explicit pose instead, comment the line above
+         and uncomment the one below (x, y, theta in radians in the MAP frame):
+    <param name="map_start_pose" value="[0.0, 0.0, 0.0]"/>
+    -->
+  </node>
 </launch>
