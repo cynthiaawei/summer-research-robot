@@ -34,11 +34,12 @@
 
     <!-- Start aligned to the map's dock (first node) so orientation matches -->
     <param name="map_start_at_dock" value="true"/>
-    <param name="map_start_pose" value="[0.0, 0.0, 3.14159]"/>
 
     <!-- If you ever want to start at an explicit pose instead, comment the line above
          and uncomment the one below (x, y, theta in radians in the MAP frame):
     <param name="map_start_pose" value="[0.0, 0.0, 0.0]"/>
     -->
   </node>
+
 </launch>
+

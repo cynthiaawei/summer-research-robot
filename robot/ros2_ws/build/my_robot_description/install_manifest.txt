@@ -2,7 +2,9 @@
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//urdf/my_robot.urdf.xacro
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//urdf/mobile_base.xacro
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//launch/display.launch.xml
+/home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//launch/navdisplay.launch.xml
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//rviz/urdf_config.rviz
+/home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//rviz/navurdf_config.rviz
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//meshes/robot_base_fixed.stl
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//meshes/upper_body.stl
 /home/krrish/summer-research-robot/robot/ros2_ws/install/my_robot_description/share/my_robot_description//meshes/robot_base.stl

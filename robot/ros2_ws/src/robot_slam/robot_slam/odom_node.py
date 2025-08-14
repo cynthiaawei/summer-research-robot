@@ -297,6 +297,9 @@ class NetworkOdometryNode(Node):
         self.tcp_port = 8888
         self.arduino_reset_sent = False  # Track if we've reset Arduino
         
+        # TF publishing timer - CRITICAL FOR NAVIGATION
+        self.tf_timer = self.create_timer(0.1, self.publish_tf_continuously)  # 10Hz TF
+        
         self.get_logger().info("🤖 Network Arduino Odometry node started")
         self.get_logger().info(f"🌐 Connecting to Windows bridge at {self.windows_ip}:{self.tcp_port}")
         
@@ -395,34 +398,27 @@ class NetworkOdometryNode(Node):
                                     vel_y = float(parts[4])
                                     vel_angular = float(parts[5])
                                     
-                                    # Unit conversion if needed (uncomment if Arduino sends cm)
-                                    # pos_x = pos_x / 100.0  # cm to meters
-                                    # pos_y = pos_y / 100.0  # cm to meters
-                                    
                                     # Filter angular velocity to reduce drift
                                     filtered_vel_angular = self.filter_angular_velocity(vel_angular)
                                     
-                                    # Check if data has changed significantly
+                                    # ALWAYS update robot state (even if no significant change)
+                                    self.x = pos_x
+                                    self.y = pos_y
+                                    self.theta = heading
+                                    self.vx = vel_x  # Use Arduino velocity directly
+                                    self.vy = vel_y  # Use Arduino velocity directly
+                                    self.vth = filtered_vel_angular
+                                    
+                                    # Check if data has changed significantly for message publishing
                                     pos_changed = (abs(pos_x - self.last_x) > self.position_threshold or 
                                                  abs(pos_y - self.last_y) > self.position_threshold)
                                     angle_changed = abs(heading - self.last_theta) > self.angle_threshold
-                                    
-                                    # Also check if velocities are significant
                                     vel_significant = (abs(vel_x) > 0.01 or abs(vel_y) > 0.01 or 
                                                      abs(filtered_vel_angular) > 0.01)
                                     
-                                    # Only update and publish if significant change or movement
+                                    # Only publish odom MESSAGE if significant change (saves bandwidth)
                                     if pos_changed or angle_changed or vel_significant:
-                                        # Update robot state (directly use Arduino values)
-                                        self.x = pos_x
-                                        self.y = pos_y
-                                        self.theta = heading
-                                        self.vx = vel_x  # Use Arduino velocity directly
-                                        self.vy = vel_y  # Use Arduino velocity directly
-                                        self.vth = filtered_vel_angular
-                                        
-                                        # Publish odometry immediately
-                                        self.publish_odometry()
+                                        self.publish_odometry_message()
                                         
                                         # Update last values
                                         self.last_x = pos_x
@@ -437,6 +433,8 @@ class NetworkOdometryNode(Node):
                                         
                                         if self._msg_count % 20 == 0:
                                             self.get_logger().info(f"📊 Odom: x={pos_x:.3f}, y={pos_y:.3f}, θ={heading:.3f}, vx={vel_x:.3f}, vy={vel_y:.3f}, ω={filtered_vel_angular:.3f}")
+                                    
+                                    # NOTE: TF is published continuously by timer, not here!
                                     
                                 except ValueError as e:
                                     self.get_logger().warn(f"⚠️ Parse error: {e}")
@@ -458,9 +456,22 @@ class NetworkOdometryNode(Node):
         qz = math.sin(yaw / 2.0)
         qw = math.cos(yaw / 2.0)
         return Quaternion(x=0.0, y=0.0, z=qz, w=qw)
+    
+    def publish_tf_continuously(self):
+        """Publish TF transform continuously - CRITICAL FOR NAVIGATION!"""
+        current_time = self.get_clock().now()
+        tf_msg = TransformStamped()
+        tf_msg.header.stamp = current_time.to_msg()
+        tf_msg.header.frame_id = 'odom'
+        tf_msg.child_frame_id = 'base_footprint'
+        tf_msg.transform.translation.x = self.x
+        tf_msg.transform.translation.y = self.y
+        tf_msg.transform.translation.z = 0.0
+        tf_msg.transform.rotation = self.euler_to_quaternion(self.theta)
+        self.tf_broadcaster.sendTransform(tf_msg)
         
-    def publish_odometry(self):
-        """Publish odometry message and TF"""
+    def publish_odometry_message(self):
+        """Publish odometry message (only when needed to save bandwidth)"""
         current_time = self.get_clock().now()
         
         # Create odometry message
@@ -492,17 +503,6 @@ class NetworkOdometryNode(Node):
         
         # Publish
         self.odom_pub.publish(odom)
-        
-        # TF
-        tf_msg = TransformStamped()
-        tf_msg.header.stamp = current_time.to_msg()
-        tf_msg.header.frame_id = 'odom'
-        tf_msg.child_frame_id = 'base_footprint'
-        tf_msg.transform.translation.x = self.x
-        tf_msg.transform.translation.y = self.y
-        tf_msg.transform.translation.z = 0.0
-        tf_msg.transform.rotation = self.euler_to_quaternion(self.theta)
-        self.tf_broadcaster.sendTransform(tf_msg)
 
 def main(args=None):
     rclpy.init(args=args)
