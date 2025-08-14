@@ -2184,7 +2184,7 @@ class EnhancedRobotConfig:
     motor3_compensate: int = 3
     obstacle_threshold: float = 30.0
     sensor_timeout: float = 0.5
-    obstacle_clear_threshold: float = 50.0
+    obstacle_clear_threshold: float = 0.2
     camera_index: int = 0
     # FIXED: Use correct backend images path
     face_images_path: str = 'images'  # Relative to backend directory
