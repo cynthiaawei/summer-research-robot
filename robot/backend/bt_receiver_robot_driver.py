@@ -1,162 +1,129 @@
 #!/usr/bin/env python3
-# bt_receiver_robot_driver.py — Bluetooth RFCOMM server on the Pi.
-# Receives JSON (newline-delimited) with "steps": [{"direction","duration_ms","speed_percent"}...]
-# Then calls your movement layer. Requires python3-bluez.
-#
-# Run:
-#   sudo python3 bt_receiver_robot_driver.py
-#
+# simple_bt_receiver.py - No service advertising, just raw RFCOMM
 import json
-import os
-import socket
-import sys
 import threading
 import time
 
-# Prefer your existing movement module(s)
-MOVE = STOP = ESTOP = None
+# Import movement functions
 try:
     from robot_movement import move as RM_move, stop as RM_stop, emergency_stop as RM_estop
     MOVE, STOP, ESTOP = RM_move, RM_stop, RM_estop
+    print("✅ Imported robot_movement successfully")
 except Exception:
     try:
         from enhanced_robot_movement import move as RM_move, stop as RM_stop, emergency_stop as RM_estop
         MOVE, STOP, ESTOP = RM_move, RM_stop, RM_estop
+        print("✅ Imported enhanced_robot_movement successfully")
     except Exception as e:
-        print("Could not import robot movement module. Make sure robot_movement.py is on PYTHONPATH.")
-        raise
+        print(f"❌ Could not import movement module: {e}")
+        exit(1)
 
-# PyBluez
-try:
-    from bluetooth import (
-        BluetoothSocket, RFCOMM, PORT_ANY,
-        SERIAL_PORT_CLASS, SERIAL_PORT_PROFILE,
-        advertise_service
-    )
-except Exception as e:
-    print("PyBluez not available. Install with: sudo apt-get install python3-bluez")
-    raise
+from bluetooth import BluetoothSocket, RFCOMM
 
-UUID_SPP = "00001101-0000-1000-8000-00805F9B34FB"
-DEFAULT_TEST_SPEED = int(os.environ.get("ROBOT_TEST_SPEED", "18"))  # % PWM for testing
-
-def handle_client(sock):
-    sock_file = sock.makefile("rwb", buffering=0)
-    buf = b""
+def handle_client(client_sock, addr):
+    print(f"📱 Client connected from {addr}")
+    buffer = b""
+    
     try:
         while True:
-            chunk = sock.recv(4096)
-            if not chunk:
+            data = client_sock.recv(1024)
+            if not data:
                 break
-            buf += chunk
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                text = line.decode("utf-8", errors="ignore").strip()
-                if not text:
-                    continue
-                try:
-                    msg = json.loads(text)
-                except json.JSONDecodeError:
-                    continue
-                process_message(msg, sock)
-    except (OSError, socket.error):
-        pass
+                
+            buffer += data
+            
+            # Process complete JSON lines
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                message = line.decode('utf-8').strip()
+                
+                if message:
+                    try:
+                        cmd = json.loads(message)
+                        process_command(cmd)
+                    except json.JSONDecodeError as e:
+                        print(f"❌ Invalid JSON: {e}")
+                        
+    except Exception as e:
+        print(f"❌ Client error: {e}")
     finally:
-        try:
-            sock.close()
-        except Exception:
-            pass
-        print("Client disconnected.")
+        client_sock.close()
+        print(f"📱 Client {addr} disconnected")
 
-
-def process_message(msg, sock):
-    mtype = msg.get("type")
-    if mtype == "emergency_stop":
+def process_command(cmd):
+    cmd_type = cmd.get("type", "")
+    
+    if cmd_type == "emergency_stop":
+        print("🛑 Emergency stop!")
         try:
             ESTOP()
-        except Exception:
+        except:
             STOP()
-        _reply(sock, {"ok": True, "action": "emergency_stop"})
         return
-
-    if mtype == "plan_steps":
-        steps = msg.get("steps", [])
-        slow_pct = int(msg.get("meta", {}).get("speed_percent", DEFAULT_TEST_SPEED))
-        executed = 0
-        print(f"Received plan with {len(steps)} steps. Using default speed%={slow_pct}.")
-        for step in steps:
-            direction = (step.get("direction") or "").lower()
+    
+    if cmd_type == "plan_steps":
+        steps = cmd.get("steps", [])
+        print(f"📋 Received plan with {len(steps)} steps")
+        
+        for i, step in enumerate(steps):
+            direction = step.get("direction", "").lower()
             duration_ms = int(step.get("duration_ms", 0))
-            speed_pct = int(step.get("speed_percent", slow_pct))
-
-            # Normalize a few aliases
-            alias = {
-                "left": "turnleft", "right": "turnright",
-                "forward": "forward", "back": "backward",
-                "backward": "backward", "stop": "stop",
-                "turn_left": "turnleft", "turn_right": "turnright",
-            }
-            direction = alias.get(direction, direction)
-
-            if direction not in ("forward", "backward", "turnleft", "turnright", "moveleft", "moveright", "stop"):
-                print(f"Skipping unknown direction: {direction}")
-                continue
-
-            try:
-                ok = True
-                if direction == "stop":
-                    ok = STOP()
-                else:
-                    ok = MOVE(direction, speed=speed_pct, duration_ms=duration_ms)
-                executed += 1 if ok else 0
-            except Exception as e:
-                print(f"Movement error: {e}")
+            speed_pct = int(step.get("speed_percent", 18))
+            
+            print(f"  Step {i+1}: {direction} for {duration_ms}ms at {speed_pct}%")
+            
+            if direction == "stop":
+                STOP()
+            elif direction in ["forward", "backward", "turnleft", "turnright"]:
                 try:
+                    result = MOVE(direction, speed=speed_pct, duration_ms=duration_ms)
+                    if not result:
+                        print(f"❌ Movement failed for step {i+1}")
+                        STOP()
+                        break
+                except Exception as e:
+                    print(f"❌ Movement error: {e}")
                     STOP()
-                except Exception:
-                    pass
-                break
-
-        _reply(sock, {"ok": True, "executed": executed})
-        return
-
-    _reply(sock, {"ok": False, "error": "unknown_message_type"})
-
-
-def _reply(sock, obj):
-    try:
-        sock.sendall((json.dumps(obj) + "\n").encode("utf-8"))
-    except Exception:
-        pass
-
+                    break
+            else:
+                print(f"❌ Unknown direction: {direction}")
+        
+        print("✅ Plan execution complete")
 
 def main():
+    # Create RFCOMM socket on a fixed channel
     server_sock = BluetoothSocket(RFCOMM)
-    server_sock.bind(("", PORT_ANY))
-    server_sock.listen(1)
-    port = server_sock.getsockname()[1]
-
-    advertise_service(
-        server_sock,
-        "RobotNavSPP",
-        service_id=UUID_SPP,
-        service_classes=[UUID_SPP, SERIAL_PORT_CLASS],
-        profiles=[SERIAL_PORT_PROFILE],
-    )
-
-    print(f"Bluetooth RFCOMM server listening on channel {port} (SPP). Waiting for connection...")
+    
     try:
+        # Bind to any available port
+        server_sock.bind(("", 1))  # Try channel 1 first
+        server_sock.listen(1)
+        
+        port = server_sock.getsockname()[1]
+        print(f"🔵 Bluetooth server listening on RFCOMM channel {port}")
+        print(f"📡 Pi MAC address: Use 'bluetoothctl show' to find it")
+        print(f"🔗 On laptop, connect to this Pi and use RFCOMM channel {port}")
+        print("⏳ Waiting for connections...")
+        
         while True:
-            client_sock, client_info = server_sock.accept()
-            print(f"Client connected: {client_info}")
-            t = threading.Thread(target=handle_client, args=(client_sock,), daemon=True)
-            t.start()
+            client_sock, client_addr = server_sock.accept()
+            
+            # Handle each client in a separate thread
+            client_thread = threading.Thread(
+                target=handle_client, 
+                args=(client_sock, client_addr),
+                daemon=True
+            )
+            client_thread.start()
+            
     except KeyboardInterrupt:
-        pass
+        print("\n🛑 Shutting down server...")
+    except Exception as e:
+        print(f"❌ Server error: {e}")
     finally:
         try:
             server_sock.close()
-        except Exception:
+        except:
             pass
 
 if __name__ == "__main__":
