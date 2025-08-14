@@ -2180,7 +2180,7 @@ class EnhancedRobotConfig:
     trig3: int = 15
     pwm_frequency: int = 1000
     # default_speed: int = 25
-    default_speed: int = 2
+    default_speed: int = 10
     motor3_compensate: int = 3
     obstacle_threshold: float = 30.0
     sensor_timeout: float = 0.5

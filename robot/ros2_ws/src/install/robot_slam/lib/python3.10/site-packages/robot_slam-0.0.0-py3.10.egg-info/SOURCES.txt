@@ -9,8 +9,10 @@ setup.py
 ../build/robot_slam/robot_slam.egg-info/top_level.txt
 ../build/robot_slam/robot_slam.egg-info/zip-safe
 launch/slam.launch.xml
+launch/slam_nav2.launch.xml
 resource/robot_slam
 robot_slam/__init__.py
+robot_slam/nav2_tcp_bridge.py
 robot_slam/odom_node.py
 test/test_copyright.py
 test/test_flake8.py

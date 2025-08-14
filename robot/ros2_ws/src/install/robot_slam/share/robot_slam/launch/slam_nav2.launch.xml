@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Args -->
+  <arg name="map_path"       default="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
+  <arg name="use_sim_time"   default="false"/>
+  <arg name="launch_rviz"    default="true"/>
+  <arg name="nav2_params"    default="$(find-pkg-share nav2_bringup)/params/nav2_params.yaml"/>
+
+  <!-- Your robot & LiDAR -->
+  <include file="$(find-pkg-share my_robot_description)/launch/display.launch.xml"/>
+  <include file="$(find-pkg-share rplidar_ros)/launch/view_rplidar_c1_launch.py"/>
+
+  <!-- Optional identity TF so plugins expecting base_link are happy -->
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="base_footprint_to_base_link"
+        args="0 0 0 0 0 0 base_footprint base_link" output="screen"/>
+
+  <!-- SLAM Toolbox in LOCALIZATION mode (loads your serialized graph and publishes map->odom) -->
+  <node pkg="slam_toolbox" exec="localization_slam_toolbox_node"
+        name="slam_toolbox" output="screen">
+    <param name="mode"        value="localization"/>
+    <param name="map_frame"   value="map"/>
+    <param name="odom_frame"  value="odom"/>
+    <param name="base_frame"  value="base_footprint"/>
+    <param name="scan_topic"  value="/scan"/>
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+
+    <!-- Load previous pose-graph (NO extension) -->
+    <param name="map_file_name" value="$(var map_path)"/>
+
+    <!-- Start at dock. (If you need an explicit pose, change to map_start_pose below.) -->
+    <param name="map_start_at_dock" value="true"/>
+    <!-- Example explicit pose (uncomment instead of the line above):
+    <param name="map_start_pose" value="[0.0, 0.0, 0.0]"/>
+    -->
+  </node>
+
+  <!-- Nav2: no map_server, no AMCL; uses /map and map->odom from SLAM -->
+  <include file="$(find-pkg-share nav2_bringup)/launch/bringup_launch.py">
+    <arg name="slam" value="False"/>
+    <arg name="map" value=""/>
+    <arg name="params_file" value="$(var nav2_params)"/>
+    <arg name="use_sim_time" value="$(var use_sim_time)"/>
+    <arg name="autostart" value="True"/>
+  </include>
+
+  <!-- RViz (Nav2 default view) -->
+  <node if="$(var launch_rviz)" pkg="rviz2" exec="rviz2" name="rviz2" output="screen"
+        args="-d $(find-pkg-share nav2_bringup)/rviz/nav2_default_view.rviz">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+  </node>
+</launch>
