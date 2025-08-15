@@ -1,4 +1,4 @@
-# # enhanced_robot_movement.py - Complete fixed version with face_helper integration
+ # enhanced_robot_movement.py - Complete fixed version with face_helper integration
 # import asyncio
 # import re
 # import threading
@@ -2183,8 +2183,8 @@ class EnhancedRobotConfig:
     trig3: int = 15
     pwm_frequency: int = 1000
     #default_speed: int = 25
-    #default_speed: int = 15
-    default_speed: int = 10
+    default_speed: int = 15
+    #default_speed: int = 10
     motor3_compensate: int = 3
     obstacle_threshold: float = 30.0
     sensor_timeout: float = 0.5
