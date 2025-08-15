@@ -2167,13 +2167,10 @@ class HandDetector:
 class EnhancedRobotConfig:
     """Enhanced robot configuration with FIXED paths"""
     motor1_speed: int = 38
-    #motor1_speed: int = 32
     motor1_dir: int = 40
     motor2_speed: int = 32
-    #motor2_speed: int = 32
     motor2_dir: int = 36
     motor3_speed: int = 16
-    #motor3_speed: int = 20
     motor3_dir: int = 26
     echo1: int = 31
     echo2: int = 29
@@ -2183,9 +2180,9 @@ class EnhancedRobotConfig:
     trig3: int = 15
     pwm_frequency: int = 1000
     #default_speed: int = 25
-    default_speed: int = 15
+    default_speed: int = 14
     #default_speed: int = 10
-    motor3_compensate: int = 3
+    motor3_compensate: int = 5
     obstacle_threshold: float = 30.0
     sensor_timeout: float = 0.5
     obstacle_clear_threshold: float = 0
