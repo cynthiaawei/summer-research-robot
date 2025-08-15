@@ -1,8 +1,8 @@
 import os
 import glob
 
-old_ip = "$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/v1"
-new_ip = "$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/v1"
+old_ip = "$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/room3"
+new_ip = "$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/room3"
 
 # Find all Python and XML files
 for pattern in ["**/*.py", "**/*.xml", "**/*.yaml"]:

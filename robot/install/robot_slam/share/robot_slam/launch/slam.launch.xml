@@ -3,7 +3,7 @@
 <launch>
   <!-- ===== ARGS ===== -->
   <!-- Base path (no extension) of your serialized graph: v1.posegraph / v1.data -->
-  <arg name="map_path"   default="$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/v1"/>
+  <arg name="map_path"   default="$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/room3"/>
   <!-- Initial guess for LOCALIZE_AT_POSE (theta in radians) -->
   <arg name="init_x"     default="0.0"/>
   <arg name="init_y"     default="0.0"/>

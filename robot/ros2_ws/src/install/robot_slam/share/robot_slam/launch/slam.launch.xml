@@ -30,7 +30,7 @@
 
     <!-- Load previous serialized pose-graph on startup (NO extension) -->
     <param name="map_file_name"
-           value="$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/v1"/>
+           value="$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/room3"/>
 
     <!-- Start aligned to the map's dock (first node) so orientation matches -->
     <param name="map_start_at_dock" value="true"/>
