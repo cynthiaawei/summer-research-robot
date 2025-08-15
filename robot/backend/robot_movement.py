@@ -2172,8 +2172,8 @@ class EnhancedRobotConfig:
     motor2_speed: int = 32
     #motor2_speed: int = 32
     motor2_dir: int = 36
-   # motor3_speed: int = 16
-    motor3_speed: int = 20
+    motor3_speed: int = 16
+    #motor3_speed: int = 20
     motor3_dir: int = 26
     echo1: int = 31
     echo2: int = 29
