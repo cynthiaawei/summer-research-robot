@@ -2,7 +2,7 @@
 	"artifacts" : 
 	[
 		{
-			"path" : "rplidar_client"
+			"path" : "rplidar_node"
 		}
 	],
 	"backtrace" : 1,
@@ -31,7 +31,7 @@
 			{
 				"command" : 0,
 				"file" : 0,
-				"line" : 74,
+				"line" : 59,
 				"parent" : 0
 			},
 			{
@@ -43,7 +43,7 @@
 			{
 				"command" : 3,
 				"file" : 0,
-				"line" : 75,
+				"line" : 61,
 				"parent" : 0
 			},
 			{
@@ -105,11 +105,11 @@
 			[
 				{
 					"backtrace" : 6,
-					"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include"
+					"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include"
 				},
 				{
 					"backtrace" : 6,
-					"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/src"
+					"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/src"
 				},
 				{
 					"backtrace" : 7,
@@ -268,11 +268,27 @@
 			},
 			"sourceIndexes" : 
 			[
-				0
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16
 			]
 		}
 	],
-	"id" : "rplidar_client::@6890427a1f51a3e7e1df",
+	"id" : "rplidar_node::@6890427a1f51a3e7e1df",
 	"install" : 
 	{
 		"destinations" : 
@@ -284,7 +300,7 @@
 		],
 		"prefix" : 
 		{
-			"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/install/rplidar_ros"
+			"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/install/rplidar_ros"
 		}
 	},
 	"link" : 
@@ -667,8 +683,8 @@
 		],
 		"language" : "CXX"
 	},
-	"name" : "rplidar_client",
-	"nameOnDisk" : "rplidar_client",
+	"name" : "rplidar_node",
+	"nameOnDisk" : "rplidar_node",
 	"paths" : 
 	{
 		"build" : ".",
@@ -680,7 +696,23 @@
 			"name" : "Source Files",
 			"sourceIndexes" : 
 			[
-				0
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16
 			]
 		}
 	],
@@ -689,7 +721,103 @@
 		{
 			"backtrace" : 1,
 			"compileGroupIndex" : 0,
-			"path" : "src/rplidar_client.cpp",
+			"path" : "src/rplidar_node.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/arch/linux/net_serial.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/arch/linux/net_socket.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/arch/linux/timer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/dataunpacker/dataunpacker.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/dataunpacker/unpacker/handler_capsules.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/dataunpacker/unpacker/handler_hqnode.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/dataunpacker/unpacker/handler_normalnode.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/hal/thread.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/rplidar_driver.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_async_transceiver.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_crc.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_lidar_driver.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_lidarprotocol_codec.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_serial_channel.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_tcp_channel.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 0,
+			"path" : "sdk/src/sl_udp_channel.cpp",
 			"sourceGroupIndex" : 0
 		}
 	],

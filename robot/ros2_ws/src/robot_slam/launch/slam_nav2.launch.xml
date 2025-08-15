@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <launch>
   <!-- Args -->
-  <arg name="map_path"       default="/home/krrish/summer-research-robot/robot/ros2_ws/v1"/>
+  <arg name="map_path"       default="$(env HOME)/jenny/summer-research-robot/robot/ros2_ws/v1"/>
   <arg name="use_sim_time"   default="false"/>
   <arg name="launch_rviz"    default="true"/>
   <arg name="nav2_params"    default="$(find-pkg-share nav2_bringup)/params/nav2_params.yaml"/>
@@ -28,10 +28,11 @@
     <param name="map_file_name" value="$(var map_path)"/>
 
     <!-- Start at dock. (If you need an explicit pose, change to map_start_pose below.) -->
-    <param name="map_start_at_dock" value="true"/>
+    <!-- <param name="map_start_at_dock" value="true"/> -->
     <!-- Example explicit pose (uncomment instead of the line above):
     <param name="map_start_pose" value="[0.0, 0.0, 0.0]"/>
     -->
+    <param name="map_start_pose" value="[0.0, 0.0, 0.0]"/>
   </node>
 
   <!-- Nav2: no map_server, no AMCL; uses /map and map->odom from SLAM -->

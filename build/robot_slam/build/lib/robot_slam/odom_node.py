@@ -44,7 +44,7 @@ class NetworkOdometryNode(Node):
         # Network connection - HARDCODED IP
         self.socket = None
         self.connected = False
-        self.windows_ip = "172.31.176.1"  # Hardcoded since nc works with this
+        self.windows_ip = "172.27.144.1"  # Hardcoded since nc works with this
         self.tcp_port = 8888
         
         # Timer for publishing - Only when data changes significantly

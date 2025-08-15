@@ -98,13 +98,13 @@
 		{
 			"backtrace" : 9,
 			"isGenerated" : true,
-			"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/build/rplidar_ros/CMakeFiles/rplidar_ros_uninstall",
+			"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/build/rplidar_ros/CMakeFiles/rplidar_ros_uninstall",
 			"sourceGroupIndex" : 0
 		},
 		{
 			"backtrace" : 0,
 			"isGenerated" : true,
-			"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/build/rplidar_ros/CMakeFiles/rplidar_ros_uninstall.rule",
+			"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/build/rplidar_ros/CMakeFiles/rplidar_ros_uninstall.rule",
 			"sourceGroupIndex" : 1
 		}
 	],
