@@ -1,0 +1,2 @@
+robot/ros2_ws/room2.data filter=lfs diff=lfs merge=lfs -text
+robot/ros2_ws/room2.posegraph filter=lfs diff=lfs merge=lfs -text
