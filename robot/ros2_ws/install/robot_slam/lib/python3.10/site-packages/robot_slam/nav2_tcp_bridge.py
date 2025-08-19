@@ -168,8 +168,8 @@ class Nav2TCPBridge(Node):
 
             # Rotate if heading error exceeds threshold
             if abs(err) > self.hdg_thresh:
-                deg = math.degrees(abs(err))
-                dur_s = deg * (math.pi/180.0) / max(1e-3, self.ang)
+                # FIXED: Direct calculation without unnecessary unit conversions
+                dur_s = abs(err) / max(1e-3, self.ang)
                 steps.append({
                     "direction": "turnleft" if err > 0 else "turnright",
                     "duration_ms": int(1000 * min(dur_s, 5.0))  # No speed_percent

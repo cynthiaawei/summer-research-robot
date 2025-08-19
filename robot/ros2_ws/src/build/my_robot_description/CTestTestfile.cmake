@@ -1,6 +1,6 @@
 # CMake generated Testfile for 
-# Source directory: /home/krrish/summer-research-robot/robot/ros2_ws/src/my_robot_description
-# Build directory: /home/krrish/summer-research-robot/robot/ros2_ws/src/build/my_robot_description
+# Source directory: /home/jenny/summer-research-robot/robot/ros2_ws/src/my_robot_description
+# Build directory: /home/jenny/summer-research-robot/robot/ros2_ws/src/build/my_robot_description
 # 
 # This file includes the relevant testing commands required for 
 # testing this directory and lists subdirectories to be tested as well.

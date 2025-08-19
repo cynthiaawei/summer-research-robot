@@ -24,7 +24,7 @@
 			{
 				"command" : 2,
 				"file" : 4,
-				"line" : 9,
+				"line" : 45,
 				"parent" : 0
 			},
 			{
@@ -69,8 +69,8 @@
 			}
 		]
 	},
-	"id" : "my_robot_description_uninstall::@6890427a1f51a3e7e1df",
-	"name" : "my_robot_description_uninstall",
+	"id" : "rplidar_ros_uninstall::@6890427a1f51a3e7e1df",
+	"name" : "rplidar_ros_uninstall",
 	"paths" : 
 	{
 		"build" : ".",
@@ -98,13 +98,13 @@
 		{
 			"backtrace" : 9,
 			"isGenerated" : true,
-			"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/build/my_robot_description/CMakeFiles/my_robot_description_uninstall",
+			"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/build/rplidar_ros/CMakeFiles/rplidar_ros_uninstall",
 			"sourceGroupIndex" : 0
 		},
 		{
 			"backtrace" : 0,
 			"isGenerated" : true,
-			"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/build/my_robot_description/CMakeFiles/my_robot_description_uninstall.rule",
+			"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/build/rplidar_ros/CMakeFiles/rplidar_ros_uninstall.rule",
 			"sourceGroupIndex" : 1
 		}
 	],

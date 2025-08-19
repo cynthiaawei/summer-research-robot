@@ -7,7 +7,7 @@
 				{
 					"build" : ".",
 					"hasInstallRule" : true,
-					"jsonFile" : "directory-.-21dfed0e8381de296899.json",
+					"jsonFile" : "directory-.-2be58bcf100b9ffbbf4f.json",
 					"minimumCMakeVersion" : 
 					{
 						"string" : "3.12"
@@ -48,28 +48,28 @@
 				{
 					"directoryIndex" : 0,
 					"id" : "rplidar_client::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-rplidar_client-e1038ee769d30bd162ec.json",
+					"jsonFile" : "target-rplidar_client-9748bca8d7ed4fa766eb.json",
 					"name" : "rplidar_client",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "rplidar_composition::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-rplidar_composition-b87a72731a6bfcfcde8b.json",
+					"jsonFile" : "target-rplidar_composition-9f88c3950b42abd9e310.json",
 					"name" : "rplidar_composition",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "rplidar_node::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-rplidar_node-ae48810f203a08d1be78.json",
+					"jsonFile" : "target-rplidar_node-3a91c68fb5383b91fd04.json",
 					"name" : "rplidar_node",
 					"projectIndex" : 0
 				},
 				{
 					"directoryIndex" : 0,
 					"id" : "rplidar_ros_uninstall::@6890427a1f51a3e7e1df",
-					"jsonFile" : "target-rplidar_ros_uninstall-07b1172ea7c3ecc9ebab.json",
+					"jsonFile" : "target-rplidar_ros_uninstall-7e3d94a471992c3f73f7.json",
 					"name" : "rplidar_ros_uninstall",
 					"projectIndex" : 0
 				},
@@ -86,8 +86,8 @@
 	"kind" : "codemodel",
 	"paths" : 
 	{
-		"build" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/build/rplidar_ros",
-		"source" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros"
+		"build" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/build/rplidar_ros",
+		"source" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros"
 	},
 	"version" : 
 	{

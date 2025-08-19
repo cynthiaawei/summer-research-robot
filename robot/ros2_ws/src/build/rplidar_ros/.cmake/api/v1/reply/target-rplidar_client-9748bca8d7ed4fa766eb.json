@@ -105,11 +105,11 @@
 			[
 				{
 					"backtrace" : 6,
-					"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include"
+					"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/include"
 				},
 				{
 					"backtrace" : 6,
-					"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/src"
+					"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/rplidar_ros/sdk/src"
 				},
 				{
 					"backtrace" : 7,
@@ -284,7 +284,7 @@
 		],
 		"prefix" : 
 		{
-			"path" : "/home/krrish/summer-research-robot/robot/ros2_ws/src/install/rplidar_ros"
+			"path" : "/home/jenny/summer-research-robot/robot/ros2_ws/src/install/rplidar_ros"
 		}
 	},
 	"link" : 

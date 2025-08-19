@@ -17,6 +17,7 @@ float filtered_ax = 0.0, filtered_ay = 0.0;
 // CRITICAL: Much more aggressive thresholds to stop drift
 const float VELOCITY_DECAY = 0.85;        // Was 0.98 - much more aggressive!
 const float MIN_VELOCITY_THRESHOLD = 0.02; // Was 0.005 - higher to stop drift
+const float FORCE_W_ZERO_THRESHOLD = 0.3;
 const float ACCEL_THRESHOLD = 0.25;       // Was 0.12 - higher to ignore small accelerations
 const float MAX_VELOCITY = 0.5;           // Was 1.5 - much lower max velocity
 const float MIN_DT = 0.015;
@@ -200,6 +201,12 @@ void loop() {
       }
     }
   }
+
+   // force vel_angular to be zero if below threshold
+    if (fabs(vel_angular) < FORCE_W_ZERO_THRESHOLD) {
+      // vel_y += accel_y_ms2 * dt;
+      vel_angular = 0.000;
+    }
   
   // ALWAYS apply velocity decay (even when stationary)
   vel_x *= VELOCITY_DECAY;
@@ -218,7 +225,7 @@ void loop() {
   pos_y += vel_y * dt;
   
   // Output telemetry every 100ms
-  if (current_time - last_print_time >= 100) {
+  if (current_time - last_print_time >= 60) {
     Serial.print("ODOM:");
     Serial.print(pos_x, 4); Serial.print(",");
     Serial.print(pos_y, 4); Serial.print(",");
