@@ -141,11 +141,12 @@ void loop() {
     return;
   }
   
-  // Angular velocity processing
+  // Angular velocity processing - SINGLE DEADZONE FILTER
   float gz_corrected = gz - gyro_offset_z;
   vel_angular = gz_corrected * DEG_TO_RAD;
   
-  if (fabs(vel_angular) < 0.02) {
+  // Single, more aggressive deadzone filter
+  if (fabs(vel_angular) < 0.035) {  // Increased from 0.02 to 0.035
     vel_angular = 0.0;
   }
   
@@ -166,7 +167,7 @@ void loop() {
   // ZERO VELOCITY UPDATE - detect if robot is stationary
   float total_accel_magnitude = sqrt(accel_x_ms2*accel_x_ms2 + accel_y_ms2*accel_y_ms2);
   
-  if (total_accel_magnitude < ACCEL_THRESHOLD && abs(vel_angular) < 0.02) {
+  if (total_accel_magnitude < ACCEL_THRESHOLD && abs(vel_angular) < 0.035) {
     // Robot appears stationary
     if (!is_stationary) {
       stationary_start_time = current_time;
@@ -217,8 +218,8 @@ void loop() {
   pos_x += vel_x * dt;
   pos_y += vel_y * dt;
   
-  // Output telemetry every 100ms
-  if (current_time - last_print_time >= 100) {
+  // Output telemetry every 60ms
+  if (current_time - last_print_time >= 60) {
     Serial.print("ODOM:");
     Serial.print(pos_x, 4); Serial.print(",");
     Serial.print(pos_y, 4); Serial.print(",");
