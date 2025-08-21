@@ -198,7 +198,7 @@ void loop() {
     // Process X acceleration ONLY if above threshold
     if (fabs(accel_x_ms2) > ACCEL_THRESHOLD) {
       vel_x += accel_x_ms2 * dt;
-      if (fabs(accel_x_ms2) > 0.5) { // Only log significant accelerations
+      if (fabs(accel_x_ms2) > 0.1) { // Only log significant accelerations changed from 0.5 -> 0.1
         Serial.print("🚀 X: "); Serial.print(accel_x_ms2, 2);
         Serial.print(" → vel_x="); Serial.println(vel_x, 3);
       }
@@ -207,7 +207,7 @@ void loop() {
     // Process Y acceleration ONLY if above threshold  
     if (fabs(accel_y_ms2) > ACCEL_THRESHOLD) {
       vel_y += accel_y_ms2 * dt;
-      if (fabs(accel_y_ms2) > 0.5) { // Only log significant accelerations
+      if (fabs(accel_y_ms2) > 0.1) { // Only log significant accelerations changed from 0.5 -> 0.1
         Serial.print("🔄 Y: "); Serial.print(accel_y_ms2, 2);
         Serial.print(" → vel_y="); Serial.println(vel_y, 3);
       }
