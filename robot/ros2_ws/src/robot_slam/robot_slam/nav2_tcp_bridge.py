@@ -70,15 +70,15 @@ class Nav2TCPBridge(Node):
     # Constructor of nav2TCPbridge 
     # @param: self = node instance
     #         host, port etc = node data parameters
-
-    def __init__(self, host, port, test_lin, test_ang, stride_m, hdg_thresh_deg):
+    # Expected units to come in     [m/s]     [rad/s]     [m]       [rad]
+    def __init__(self, host, port, test_lin, test_ang, stride_m, hdg_thresh_rad):
         super().__init__("nav2_tcp_bridge") # make the nav2_tcp_bridge node
         # set the object values
         self.tcp = TCPClient(host, port)
-        self.lin = float(test_lin)
-        self.ang = float(test_ang)
-        self.stride = float(stride_m)
-        self.hdg_thresh = math.radians(float(hdg_thresh_deg))
+        self.lin = float(test_lin)                 # m/s
+        self.ang = float(test_ang)                 # rad/s
+        self.stride = float(stride_m)              # m
+        self.hdg_thresh = float(hdg_thresh_rad)    # rad
         self.last_plan_stamp = None
 
         self.tf_buffer = Buffer()
@@ -88,7 +88,7 @@ class Nav2TCPBridge(Node):
         self.plan_sub = self.create_subscription(Path, "/plan", self.plan_cb, qos)
         self.get_logger().info( # output the info into the terminal, ros2 log topic (topic /rosout), ros log files
             f"TCP target={host}:{port} | lin={self.lin:.2f} m/s | ang={self.ang:.2f} rad/s | "
-            f"stride={self.stride} m | hdg_thresh={hdg_thresh_deg}° | Using robot default speeds"
+            f"stride={self.stride} m | hdg_thresh={hdg_thresh_deg}  rad/s | Using robot default speeds"
         )
 
     def plan_cb(self, msg: Path): 
@@ -148,8 +148,8 @@ class Nav2TCPBridge(Node):
             "type": "plan_steps", # type of message sent through tcp; basically flag for us to know we sent steps
             "meta": {             # the current time and settings of the robot
                 "timestamp": time.time(),   
-                "linear_mps": self.lin,     # default speed
-                "angular_rps": self.ang,    # default turning ang
+                "linear_mps": self.lin,     # default speed m/s
+                "angular_rps": self.ang,    # default turning ang rad/s
                 "count": len(steps),        # number of steps in the plan
             },
             "steps": steps        # the steps to be sent over tcp
@@ -181,20 +181,26 @@ class Nav2TCPBridge(Node):
             err = norm_angle(desired - curyaw)  # print to debug
 
             # debug
-            print("\desired: %f", desired) # should be a number between -pi/2, pi/2
+            print("\ndesired: %f", desired) # should be a number between -pi/2, pi/2
             print("\err: %f", err)         # fabs should be LESS THAN 2PI 
 
             # first figure out if err is > 2pi
 
             # Rotate if heading error exceeds threshold
-            if abs(err) > self.hdg_thresh:
+            if abs(err) > (self.hdg_thresh):    # MAKE SURE TO COMPARE RADIANS TO RADIANS.
                 # FIXED: Direct calculation without unnecessary unit conversions
                 dur_s = abs(err) / max(1e-3, self.ang)  # print to debug, check self.ang    # essentially calculate the time to turn. self.ang: max rotation velocity
-                print("\ndur_s: %f", dur_s)
+                #print("\ndur_s: %f", dur_s)
                 steps.append({                          # print to debug
                     "direction": "turnleft" if err > 0 else "turnright",
                     "duration_ms": int(1000 * min(dur_s, bestWorstTime))  # No speed_percent # bruh there is an error here, dur_s >> 5.0
                 })
+
+                # debug
+                print("\self.ang: %f", self.ang)            # some number in radians
+                print("\dur_s: %f", dur_s)                  # shouldn't be a crazy number like 5s
+                print("\bestWorstTime: %f", bestWorstTime)  # shouldn't be a crazy number like 5s
+
                 curyaw = desired
 
             # Drive straight to target
@@ -222,7 +228,7 @@ def main(): #contains default speeds for the robot
     parser.add_argument("--linear", type=float, default=0.1, help="Planning linear speed (m/s)")    # changed default from 0.07
     parser.add_argument("--angular", type=float, default=0.25, help="Planning angular speed (rad/s)")
     parser.add_argument("--stride-m", type=float, default=0.40, help="Waypoint stride in meters")
-    parser.add_argument("--heading-thresh-deg", type=float, default=20.0, help="Rotate if heading error exceeds this")
+    parser.add_argument("--heading-thresh-deg", type=float, default=20.0, help="Rotate if heading error exceeds this degrees")
     args = parser.parse_args()
 
     # global angSpd # i think this is actually the same as self.ang let me check
@@ -232,10 +238,10 @@ def main(): #contains default speeds for the robot
     node = Nav2TCPBridge(   # create the node
         host=args.host,
         port=args.port,
-        test_lin=args.linear,
-        test_ang=args.angular,
-        stride_m=args.stride_m,
-        hdg_thresh_deg=args.heading_thresh_deg,
+        test_lin=args.linear,   # m/s
+        test_ang=args.angular,  # rad/s
+        stride_m=args.stride_m, # m
+        hdg_thresh_deg=math.radians(args.heading_thresh_deg), # radians (converted)
     )
     try:
         rclpy.spin(node)    # activate the node
