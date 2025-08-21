@@ -216,7 +216,7 @@ class Nav2TCPBridge(Node):
         return steps
 
 def main(): #contains default speeds for the robot
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()  # arguments settable when running the code through terminal
     parser.add_argument("--host", required=True, help="Pi IP address or hostname")
     parser.add_argument("--port", type=int, default=9999, help="TCP port")
     parser.add_argument("--linear", type=float, default=0.1, help="Planning linear speed (m/s)")    # changed default from 0.07
@@ -228,8 +228,8 @@ def main(): #contains default speeds for the robot
     # global angSpd # i think this is actually the same as self.ang let me check
     # angSpd = args.angular  # I require this to calculate the turn time
 
-    rclpy.init()
-    node = Nav2TCPBridge(
+    rclpy.init()    
+    node = Nav2TCPBridge(   # create the node
         host=args.host,
         port=args.port,
         test_lin=args.linear,
@@ -238,7 +238,7 @@ def main(): #contains default speeds for the robot
         hdg_thresh_deg=args.heading_thresh_deg,
     )
     try:
-        rclpy.spin(node)
+        rclpy.spin(node)    # activate the node
     except KeyboardInterrupt:
         pass
     finally:

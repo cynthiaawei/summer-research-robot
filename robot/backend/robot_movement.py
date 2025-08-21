@@ -2179,7 +2179,7 @@ class EnhancedRobotConfig:
     trig2: int = 13
     trig3: int = 15
     pwm_frequency: int = 1000
-    default_speed: int = 25
+    default_speed: int = 25     # change to 30?
     #default_speed: int = 10
     motor3_compensate: int = 3
     obstacle_threshold: float = 30.0
@@ -2921,7 +2921,7 @@ class EnhancedRobotController:
                 self.state.speech_recognition_active = False
             return None
     
-    def set_interaction_mode(self, mode: str) -> bool:
+    def set_interaction_mode(self, mode: str) -> bool:              
         """Set interaction mode (speech, text, keyboard, auto)"""
         valid_modes = ["idle", "speech", "text", "keyboard", "auto"]
         if mode in valid_modes:
@@ -2933,7 +2933,7 @@ class EnhancedRobotController:
             logger.warning(f"Invalid interaction mode: {mode}")
             return False
     
-    def recognize_user(self, mode: str = "auto") -> Optional[str]:
+    def recognize_user(self, mode: str = "auto") -> Optional[str]:  # face recognition
         """Recognize current user using face_helper"""
         if not FACE_HELPER_AVAILABLE or not self.current_frame:
             return None
@@ -2951,6 +2951,7 @@ class EnhancedRobotController:
             return None
     
     # Keep all your existing movement and other methods as they are...
+    # essentially, map text commands to movement commands i.e. "forward" will call the forward command with specified seconds from the central command
     def move(self, direction: str, speed: Optional[int] = None, duration_ms: Optional[int] = None) -> bool:
         direction_map = {
             "up": "forward",
@@ -2965,12 +2966,12 @@ class EnhancedRobotController:
             "moveright": "moveright",
             "stop": "stop"
         }
-        mapped_direction = direction_map.get(direction.lower(), direction.lower())
+        mapped_direction = direction_map.get(direction.lower(), direction.lower())  # making everything consistent lowercase
         with self.state_lock:
-            if self.state.obstacle_detected and mapped_direction != "stop":
+            if self.state.obstacle_detected and mapped_direction != "stop":         # deal with the obstacles
                 message = f"Movement blocked - obstacle detected by {self.state.obstacle_sensor} sensor"
                 self.state.last_speech_output = message
-                if self.config.enable_speech_synthesis and FACE_HELPER_AVAILABLE:
+                if self.config.enable_speech_synthesis and FACE_HELPER_AVAILABLE:   # basically, robot screams cannot move if it's allowed to speak
                     threading.Thread(
                         target=FR.speak,
                         args=("Cannot move, obstacle detected!",),
@@ -2978,9 +2979,9 @@ class EnhancedRobotController:
                     ).start()
                 logger.warning(message)
                 return False
-            speed = speed or self.config.default_speed
+            speed = speed or self.config.default_speed          # set speed of robot for function
             self.state.last_command = mapped_direction
-        direction_configs = {
+        direction_configs = {       # configurations for different directions based on wheel ccw/cw
             "forward": {
                 "dirs": [self.HIGH, self.HIGH, self.LOW],
                 "speeds": [0, speed, speed + self.config.motor3_compensate]
@@ -3010,7 +3011,7 @@ class EnhancedRobotController:
                 "speeds": [0, 0, 0]
             }
         }
-        if mapped_direction not in direction_configs:
+        if mapped_direction not in direction_configs:           # deal with case no direction matches 
             logger.error(f"Invalid direction: {direction}")
             return False
         config = direction_configs[mapped_direction]
@@ -3023,7 +3024,7 @@ class EnhancedRobotController:
                 logger.error(f"Error setting motor directions: {e}")
                 return False
         self._change_speeds_smooth(tuple(config["speeds"]))
-        if duration_ms is not None and duration_ms > 0:
+        if duration_ms is not None and duration_ms > 0:         # deal with case no time matches
             time.sleep(duration_ms / 1000)
             with self.state_lock:
                 if not self.state.obstacle_detected:
@@ -3034,7 +3035,7 @@ class EnhancedRobotController:
         """Stop the robot"""
         return self.move("stop")
     
-    def emergency_stop(self) -> bool:
+    def emergency_stop(self) -> bool:                   # emergency stop 
         """Emergency stop with speech notification"""
         logger.warning("Emergency stop activated")
         with self.movement_lock:
@@ -3050,7 +3051,7 @@ class EnhancedRobotController:
             ).start()
         return True
     
-    def reset_obstacle_detection(self) -> bool:
+    def reset_obstacle_detection(self) -> bool:        # exit obstacle detected after some time
         """Reset obstacle detection state"""
         self._update_obstacle_state(False)
         message = "Obstacle detection reset - robot can move again"
@@ -3065,7 +3066,7 @@ class EnhancedRobotController:
         logger.info(message)
         return True
     
-    def parse_command(self, command: str) -> Optional[Tuple[str, Optional[int]]]:
+    def parse_command(self, command: str) -> Optional[Tuple[str, Optional[int]]]:   # mapping back to directions from more natural language
         """Parse natural language command"""
         command = command.lower().strip()
         directions = {
@@ -3083,12 +3084,12 @@ class EnhancedRobotController:
             "hours": r"(\d+(?:\.\d+)?)\s*(?:hour|hr|h)s?"
         }
         direction = None
-        for dir_key, phrases in directions.items():
+        for dir_key, phrases in directions.items():             # check the direction in the dictionary
             if any(phrase in command for phrase in phrases):
                 direction = dir_key
                 break
         duration_ms = None
-        for unit, pattern in time_patterns.items():
+        for unit, pattern in time_patterns.items():             # check and convert the time with dictionary
             match = re.search(pattern, command)
             if match:
                 try:
@@ -3105,6 +3106,8 @@ class EnhancedRobotController:
                     continue
         return (direction, duration_ms) if direction else None
     
+
+    # chatbot stuff
     async def chat(self, message: str, context: str = "") -> str:
         """Chat with AI model and respond with intelligent speech"""
         if not self.ai_chain:
